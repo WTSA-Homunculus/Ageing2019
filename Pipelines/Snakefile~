@@ -1,0 +1,302 @@
+import pandas as pd
+import os
+
+#############################################################################
+# J. Baran-Gale, M. Morgan
+# WTSA - SmartSeq2 pipeline
+# This module take FASTQ files & trims, aligns and quant them using the 
+# STAR aligner. Note: there are several choices for quant (1) STAR quant, 
+# 	(2) featureCounts, (3) salmon
+#  snakemake --cluster "other"
+#  snakemake --cluster "qsub"
+#  snakemake -c 'qsub -V  -q igmm_long -pe sharedmem 8 -l h_vmem=8G -j y -cwd' --jobs=100
+#############################################################################
+configfile: "siteProfiles/configEBI.yaml"
+configfile: "config.yaml"
+
+starIndexPrefix = os.path.join(config['ref_mm10']['referenceFolder'],config['ref_mm10']['starIndex'])
+annotation = os.path.join(config['ref_mm10']['referenceFolder'],config['ref_mm10']['annotation'])
+transcriptome = os.path.join(config['ref_mm10']['referenceFolder'],config['ref_mm10']['transcriptome'])
+
+
+BASE_DIR = "/nfs/research1/marioni/mdmorgan/"
+WKDIR = BASE_DIR + "Thymus/"
+
+DIRS = ['Trimmed/','Aligned/','fastqs/QC','FC_QUANT','salmon_QUANT', 'Dedup.dir', 'Quant.dir', 'CAGE_Quant/']
+
+workdir: WKDIR
+
+SAMPLES,dummy = glob_wildcards("fastqs/rawdata/{sample}/{sample1}_R1_001.fastq.gz")
+
+#############################################################################
+# Define a set of tasks to run locally
+############################################################################
+#localrules: all, dirs
+
+#############################################################################
+# Input Rule
+#############################################################################
+rule all:
+	input: 
+		DIRS,
+		expand("fastqs/rawdata/{sample}/{sample}_R1_001.fastq.gz",sample=SAMPLES),
+		expand("fastqs/rawdata/{sample}/{sample}_R2_001.fastq.gz",sample=SAMPLES),
+		expand("fastqs/QC/{sample}_R1_001_fastqc.html",sample=SAMPLES),
+		expand("fastqs/QC/{sample}_R2_001_fastqc.html",sample=SAMPLES),
+		expand("Aligned/{sample}.Aligned.sortedByCoord.out.bam",sample=SAMPLES),
+		expand("Aligned/{sample}.Aligned.toTranscriptome.out.bam",sample=SAMPLES),
+                expand("Dedup.dir/{sample}.dedup.bam",sample=SAMPLES),
+		#expand("Dedup.dir/{sample}.Transcriptome.dedup.bam",sample=SAMPLES),
+		expand("FC_QUANT/{sample}.gene_counts.txt",sample=SAMPLES),
+		expand("FC_QUANT/{sample}.exon_counts.txt", sample=SAMPLES),
+		"Quant.dir/Merged_counts.txt",
+		"Quant.dir/Merged_exon_counts.txt",
+		expand("salmon_QUANT/{sample}",sample=SAMPLES),
+		"Quant.dir/Merged_Salmon_counts.txt",
+		expand("CAGE_Quant/{sample}.CAGE_counts.txt",sample=SAMPLES),
+		"Quant.dir/Merged_CAGE_counts.txt"
+		
+
+#############################################################################
+# DIR Rule
+#############################################################################
+rule dirs:
+	output: DIRS
+	shell: "mkdir -p "+' '.join(DIRS)
+
+#############################################################################
+# fastqc
+#############################################################################
+rule run_fastqc:
+	"""
+	Run FastQC to generate a html report with a selection of QC modules
+	"""
+	input:
+		R1="fastqs/rawdata/{sample}/{sample}_R1_001.fastq.gz",
+		R2="fastqs/rawdata/{sample}/{sample}_R2_001.fastq.gz"
+	output:
+		"fastqs/QC/{sample}_R1_001_fastqc.html",
+		"fastqs/QC/{sample}_R2_001_fastqc.html"
+	params:
+		qcEX=config['FQC']
+
+	threads: 12
+	shell:
+		"{params.qcEX}  -o fastqs/QC/  --noextract  --threads {threads}  {input}"
+#############################################################################
+# Trim adaptor
+#############################################################################
+rule trim_adaptor:
+	"""
+	Use trimmomatic to remove adaptor contamination and quality trim reads to a minimum length
+	NB: this should be user-configured to handle different read lengths and trimming parameter values
+	"""
+	input:
+		R1="fastqs/rawdata/{sample}/{sample}_R1_001.fastq.gz",
+		R2="fastqs/rawdata/{sample}/{sample}_R2_001.fastq.gz"
+	output:
+		R1 = "Trimmed/{sample}_R1_001.fastq.gz",
+		R2 = "Trimmed/{sample}_R2_001.fastq.gz"
+	threads: 12
+	params: 
+		trEX=config['TRIM'],
+		trPA=config['Tparam']
+	log:
+		"logs/trim_adaptor/{sample}.log"
+	shell:
+	# trimmomatic needs to be in the PATH variable ideally, and the adaptor sequences in a common location
+	# I think to make this as universal as possible I'll need to create a script that executes trimmomatic on
+	# the command line with the relevant options - still needs to know where the trimmomatic binary is though
+	# is this a job for conda?  Could we deploy this pipeline as a conda environment, that way we can
+	# control the paths to software binaries...
+		"""java -jar {params.trEX} PE -threads {threads} -phred33 {input.R1} {input.R2} {output.R1} {output.R1}.unpaired {output.R2} {output.R2}.unpaired {params.trPA}"""
+
+#############################################################################
+# Align Rule
+#############################################################################
+rule star_align:
+	input:
+		R1="Trimmed/{sample}_R1_001.fastq.gz",
+		R2="Trimmed/{sample}_R2_001.fastq.gz"
+	output:
+		"Aligned/{sample}.Aligned.sortedByCoord.out.bam"
+	params:
+		starEX=config['STAR'],
+		prefix = "Aligned/{sample}.",
+		readFilesCommand = config['params']['star']['readFilesCommand'], 
+		outSAMtype = config['params']['star']['outSAMtype'],
+		outSAMattributes = config['params']['star']['outSAMattributes'],
+		outSAMunmapped = config['params']['star']['outSAMunmapped'],
+		quantMode = config['params']['star']['quantMode']
+	threads: 12
+	shell: 
+		"""
+		{params.starEX} --runThreadN {threads}  --genomeDir {starIndexPrefix} --readFilesIn {input.R1} {input.R2} --readFilesCommand {params.readFilesCommand} --outFileNamePrefix {params.prefix} --outSAMtype {params.outSAMtype} 
+		--outSAMattributes {params.outSAMattributes} --outSAMunmapped {params.outSAMunmapped} --quantMode {params.quantMode}
+		"""
+
+#############################################################################
+# Deduplicate positional duplicates with PicardTools
+#############################################################################
+rule dedup_bams:
+    input: bam="Aligned/{sample}.Aligned.sortedByCoord.out.bam"
+    output: bam="Dedup.dir/{sample}.dedup.bam",
+            metrics="Dedup.dir/{sample}.metrics.txt"
+    threads: 12
+    params: PicardEX=config['PICARD']
+    shell : """
+            java -jar {params.PicardEX} MarkDuplicates I={input.bam} O={output.bam} M={output.metrics} REMOVE_DUPLICATES=true DUPLICATE_SCORING_STRATEGY=TOTAL_MAPPED_REFERENCE_LENGTH
+            """
+
+#############################################################################
+# Deduplicate BAM files aligned to the transcriptome - bams need to be sorted
+#############################################################################
+## Probably need a separate step to do sorting of transcriptome bams before deduping
+## or need to convert this to a separate function that runs the sorting into a temp file
+## before deduplication
+
+#rule dedup_transcriptome:
+#     input: bam="Aligned/{sample}.Aligned.toTranscriptome.out.bam"
+#     output: bam="Dedup.dir/{sample}.Transcriptome.dedup.bam",
+#     	     metrics="Dedup.dir/{sample}.Transcriptome.metrics.txt"     
+#     threads: 12
+#     params: PicardEX=config['PICARD']
+#     shell : """
+#     	     mkfifo {input.bam}
+#     	     java -jar {params.PicardEX} MarkDuplicates I={input.bam} O={output.bam}  M={output.metrics}  REMOVE_DUPLICATES=true DUPLICATE_SCORING_STRATEGY=TOTAL_MAPPED_REFERENCE_LENGTH
+#     	     """
+
+#############################################################################
+# salmon
+#############################################################################
+rule salmon_counts:
+	input: bam="Aligned/{sample}.Aligned.toTranscriptome.out.bam" 
+	output: "salmon_QUANT/{sample}"
+	threads: 12
+	params: 
+		salEX=config['SALMON'],
+		salStrand="IU",
+		anno=config['ref_mm10']['transcriptome']
+	shell: """
+		{params.salEX} quant -t {params.anno} -l {params.salStrand} -p {threads} -a {input.bam} -o {output}/quant.sf
+	"""
+#############################################################################
+# featureCounts - genes
+#############################################################################
+rule feature_counts:
+	input: anno=config['ref_mm10']['annotation'], 
+	       bam="Dedup.dir/{sample}.dedup.bam" 
+	output: "FC_QUANT/{sample}.gene_counts.txt"
+	threads: 12
+	params: 
+		fcEX=config['FC']
+	shell: """
+		{params.fcEX} -p -s 0 -T {threads} -t exon -g gene_id -a {input.anno} -o {output[0]} {input.bam} &> {output[0]}.log
+	"""
+
+#############################################################################
+# featureCounts - exons
+#############################################################################
+# count at exon level for differential exon usage
+
+rule feature_exon_counts:
+        input: anno=config['ref_mm10']['annotation'],
+               bam="Dedup.dir/{sample}.dedup.bam"
+        output: "FC_QUANT/{sample}.exon_counts.txt"
+        threads: 12
+        params: fcEX=config['FC']
+	shell: """
+        {params.fcEX} -p -B -s 0 -O -T {threads} -f -t exon -g exon_id -a {input.anno} -o {output[0]} {input.bam} &> {output[0]}.log
+	"""
+
+#############################################################################
+# Merge gene counts
+#############################################################################
+# there is a limit to how much can be passed to a single file
+# all we need is a comma-separated list of files, not the space separated one that snakemake generates
+# too many files breaks the POSIX file argument limit
+# need just an input directory to glob the files from as the rule input
+def merge_inputs(wildcards):
+    files = expand("FC_QUANT/{sample}.gene_counts.txt", sample=SAMPLES)
+    sep_files = ",".join(files)
+    return sep_files
+
+rule merge_counts:
+     input: directory="FC_QUANT"
+     params: regex="gene_counts.txt$"
+     output: "Quant.dir/Merged_counts.txt"
+     log: "logs/quant_merge.log"
+     threads: 1     
+     script: """
+     python scripts/merge_counts.py --input-directory={input.directory} --input-format=feature --file-regex={params.regex} > {output[0]} &> {output[0]}.log
+     """
+
+#############################################################################
+# Merge exon counts
+#############################################################################
+# there is a limit to how much can be passed to a single file
+# all we need is a comma-separated list of files, not the space separated one that snakemake generates
+# too many files breaks the POSIX file argument limit
+# need just an input directory to glob the files from as the rule input
+def merge_inputs(wildcards):
+    files = expand("FC_QUANT/{sample}.exon_counts.txt", sample=SAMPLES)
+    sep_files = ",".join(files)
+    return sep_files
+
+rule merge_exon_counts:
+     input: directory="FC_QUANT"
+     params: regex="exon_counts.txt$"
+     output: "Quant.dir/Merged_exon_counts.txt"
+     log: "logs/Exon_quant_merge.log"
+     threads: 1
+     shell: """python scripts/merge_counts.py --input-directory={input.directory} --input-format=feature --log={log} --file-regex={params.regex} > {output[0]} &> {output[0]}.log
+     """
+
+#################################################################################
+# Merge Salmon counts 
+#################################################################################
+# adapt the merge counts script to handle the salmon input files
+
+rule merge_salmon:
+     input: directory="salmon_QUANT"
+     params: regex="quant.sf$"
+     output: "Quant.dir/Merged_Salmon_counts.txt"
+     log: "logs/merge_salmon_counts.log"
+     threads: 1
+     shell: """python scripts/merge_counts.py --input-directory={input.directory} --input-format=salmon --log={log} --file-regex={params.regex} > {output[0]} &> {output[0]}.log
+     """
+
+#################################################################################
+# Quantify against FANTOM5 CAGE peaks - mark TSS usage per cell
+#################################################################################
+# provide an input GTF file of CAGE peaks - add annotattion to ensembl genes later
+
+rule count_CAGE:
+     input: anno=config['ref_mm10']['cage'],
+     	    bam="Dedup.dir/{sample}.dedup.bam"
+     output: "CAGE_Quant/{sample}.CAGE_counts.txt"
+     threads: 12
+     params: fcEX=config['FC']
+     shell: """
+     {params.fcEX} -p -s 0 -T {threads} -t exon -g gene_id -a {input.anno} -o {output[0]} {input.bam} &> {output[0]}.log
+     """
+
+#############################################################################
+# Merge CAGE peak counts
+#############################################################################
+
+rule merge_cage_counts:
+     input: directory="CAGE_Quant"
+     params: regex="CAGE_counts.txt$"
+     output: "Quant.dir/Merged_CAGE_counts.txt"
+     log: "logs/CAGE_quant_merge.log"
+     threads: 1
+     shell: """python scripts/merge_counts.py --input-directory={input.directory} --input-format=feature --log={log}  --file-regex={params.regex} > {output[0]} &> {output[0]}.log
+     """
+
+#################################################################################
+# RNA Velocity estimation
+#################################################################################
+# ideally this would use the Python CLI to do the counts estimation for the 
+# spliced and unspliced reads, however, it only works on droplet-data
+# Apparently, the R code can work on SMART-Seq2 bam files.

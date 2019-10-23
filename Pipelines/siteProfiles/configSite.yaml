@@ -1,0 +1,9 @@
+TRIM: "Trimmomatic-0.36/trimmomatic-0.36.jar"
+Tparam: "ILLUMINACLIP:/nfs/research1/marioni/software/Trimmomatic-0.36/adapters/NexteraPE-PE.fa:1:30:10:1 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:40"
+
+FQC: "fastqc"
+STAR: "STAR"
+PICARD: "picard.jar"
+
+FC: "featureCounts"
+SALMON: "salmon"

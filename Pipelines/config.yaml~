@@ -1,0 +1,24 @@
+# # Reference files
+
+base:
+        dir: "/nfs/research1/marioni/mdmorgan/Thymus"
+        run: "TEST"
+ref_mm10:
+        referenceFolder: "/nfs/research1/marioni/genomes/"
+        # the genome file
+        genome: "mm10_ERCC92.fasta"
+        # the STAR index dir
+        starIndex: "/nfs/research1/marioni/genomes/indices/"
+        # gtf file with transcripts
+        annotation: "genes/genes.gtf"
+        transcriptome: "fasta/transcripts.fa"
+        cage: "genes/mm10_CAGE.gtf"
+
+params:
+        star: 
+                readFilesCommand: "zcat"
+                outSAMtype: "BAM SortedByCoordinate"
+                outSAMattributes: "All"
+                outSAMunmapped: "Within KeepPairs"
+                quantMode: "TranscriptomeSAM GeneCounts"
+

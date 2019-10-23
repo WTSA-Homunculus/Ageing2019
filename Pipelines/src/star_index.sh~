@@ -1,0 +1,5 @@
+#! /usr/bin/bash
+
+# create a star index from the mm10-ERCC92 genome
+
+/nfs/software/marioni/STAR-2.5.3a/bin/Linux_x86_64_static/STAR --runThreadN 12 --runMode genomeGenerate  --genomeDir /nfs/leia/research/marioni/genomes/indices  --genomeFastaFiles /nfs/leia/research/marioni/genomes/mm10_ERCC92.fasta  --sjdbGTFfile /nfs/leia/research/marioni/mikemorgan/Thymus/genes/genes.gtf --sjdbOverhang 99

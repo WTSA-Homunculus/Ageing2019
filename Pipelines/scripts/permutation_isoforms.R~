@@ -1,0 +1,31 @@
+#! /usr/bin/env Rscript
+
+library(lettercase)
+library(reshape2)
+library(vegan)
+library(biomaRt)
+
+# read in the normalised isoform counts
+thymus.norm <- read.table("/nfs/research1/marioni/mdmorgan/Thymus/Quant.dir/ThymusQC_TranscriptNorm.tsv.gz",
+                          sep="\t", header=TRUE, stringsAsFactors=FALSE)
+rownames(thymus.norm) <- thymus.norm$transcript_id
+thymus.norm <- thymus.norm[, -ncol(thymus.norm)]
+
+# retrieve the gene info for all isoforms
+all.transcripts <- rownames(thymus.norm)
+ensembl <- useEnsembl(biomart='ensembl', dataset='mmusculus_gene_ensembl', GRCh=37)
+gene_symbol <- getBM(attributes=c('ensembl_gene_id', 'ensembl_transcript_id',  'external_gene_name', 'chromosome_name'),
+                     filters='ensembl_transcript_id', mart=ensembl,
+                     values=all.transcripts)
+rownames(gene_symbol) <- gene_symbol$ensembl_transcript_id
+
+# retieve the meta data to pull out the different clusters
+thymus.meta <- read.table("~/Dropbox/AgeingExperiment/Frozen/ThymusMarker_tSNE_PCA_meta.tsv",
+                          sep="\t", h=TRUE, stringsAsFactors=FALSE)
+
+# create a variable that represents the ages as a single continuous variable
+thymus.meta$AgeInt <- as.numeric(gsub(thymus.meta$Age, pattern="wk", replacement=""))
+thymus.meta$AgeFactor <- ordered(thymus.meta$AgeInt,
+                                 levels=c("1", "4", "16", "32", "52"))
+
+
