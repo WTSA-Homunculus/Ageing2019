@@ -1,0 +1,2454 @@
+---
+title: "Thymus - Figure Panels"
+output: html_notebook
+---
+
+The purpose of this notebook is to collate together the various analyses that will recapitulate the figure panels for the thymus ageing manuscript, including the 
+supplementary figures.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+library(ggplot2)
+library(reshape2)
+library(scales)
+library(pheatmap)
+library(cowplot)
+library(biomaRt)
+library(limma)
+library(goseq)
+library(stringr)
+library(RColorBrewer)
+library(flashClust)
+library(ggrepel)
+library(lettercase)
+library(destiny)
+library(scran)
+library(igraph)
+library(FNN)
+library(DropletUtils)
+library(ComplexHeatmap)
+library(viridis)
+library(edgeR)
+library(readxl)
+source("~/Dropbox/R_sessions/Clustering/CosineKNN.R")
+source("~/Dropbox/R_sessions/GGMike/theme_mike.R")
+source("~/Dropbox/R_sessions/SingleCellFunctions/single_cell_functions.R")
+```
+
+First, make the thymus cellularity figure panels
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+thymus.total.cellularity <- read.table("~/Dropbox/AgeingExperiment/Data/thymic_total_cellularity.txt",
+                                    sep="\t", header=TRUE, stringsAsFactors=FALSE)
+thymus.total.cellularity$Measure <- "Total.Thymus"
+thymus.total.cellularity <- thymus.total.cellularity[!is.na(thymus.total.cellularity$R1), ]
+
+tcell.total.cellularity <- read.table("~/Dropbox/AgeingExperiment/Data/thymocyte_total_cellularity.txt",
+                                    sep="\t", header=TRUE, stringsAsFactors=FALSE)
+tcell.total.cellularity$Measure <- "Total.Tcell"
+tcell.total.cellularity <- tcell.total.cellularity[!is.na(tcell.total.cellularity$R1), ]
+
+tec.total.cellularity <- read.table("~/Dropbox/AgeingExperiment/Data/TEC_total_cellularity.txt",
+                                    sep="\t", header=TRUE, stringsAsFactors=FALSE)
+tec.total.cellularity$Measure <- "Total.TEC"
+tec.total.cellularity <- tec.total.cellularity[!is.na(tec.total.cellularity$R1), ]
+
+ctec.total.cellularity <- read.table("~/Dropbox/AgeingExperiment/Data/Total_cTEC.txt",
+                                    sep="\t", header=TRUE, stringsAsFactors=FALSE)
+ctec.total.cellularity$Measure <- "Total.cTEC"
+ctec.total.cellularity <- ctec.total.cellularity[!is.na(ctec.total.cellularity$R1), ]
+
+
+mtec.total.cellularity <- read.table("~/Dropbox/AgeingExperiment/Data/Total_mTEC.txt",
+                                    sep="\t", header=TRUE, stringsAsFactors=FALSE)
+mtec.total.cellularity$Measure <- "Total.mTEC"
+mtec.total.cellularity <- mtec.total.cellularity[!is.na(mtec.total.cellularity$R1), ]
+
+### Pull in the percentages for the different TEC populations
+ctec.pcent.cellularity <- read.table("~/Dropbox/AgeingExperiment/Data/FACS_PCent_cTEC_in_Epcam.txt",
+                                    sep="\t", header=TRUE, stringsAsFactors=FALSE)
+ctec.pcent.cellularity$Measure <- "PcEpCam.cTEC"
+ctec.pcent.cellularity <- ctec.pcent.cellularity[!is.na(ctec.pcent.cellularity$R1), ]
+
+
+mtechi.pcent.cellularity <- read.table("~/Dropbox/AgeingExperiment/Data/FACS_PCent_mTEChi_in_Epcam.txt",
+                                    sep="\t", header=TRUE, stringsAsFactors=FALSE)
+mtechi.pcent.cellularity$Measure <- "PcEpCam.mTEChi"
+mtechi.pcent.cellularity <- mtechi.pcent.cellularity[!is.na(mtechi.pcent.cellularity$R1), ]
+
+mteclo.pcent.cellularity <- read.table("~/Dropbox/AgeingExperiment/Data/FACS_PCent_mTEClo_in_Epcam.txt",
+                                    sep="\t", header=TRUE, stringsAsFactors=FALSE)
+mteclo.pcent.cellularity$Measure <- "PcEpCam.mTEClo"
+mteclo.pcent.cellularity <- mteclo.pcent.cellularity[!is.na(mteclo.pcent.cellularity$R1), ]
+
+dsg3.pcent.cellularity <- read.table("~/Dropbox/AgeingExperiment/Data/FACS_PCent_Dsg3_in_Epcam.txt",
+                                    sep="\t", header=TRUE, stringsAsFactors=FALSE)
+dsg3.pcent.cellularity$Measure <- "PcEpCam.Dsg3"
+dsg3.pcent.cellularity <- dsg3.pcent.cellularity[!is.na(dsg3.pcent.cellularity$R1), ]
+
+
+thymic.cell.counts <- do.call(rbind.data.frame,
+                              list("Total"=thymus.total.cellularity, "Tcell"=tcell.total.cellularity, 
+                                   "cTEC.Total"=ctec.total.cellularity))
+# remove empty rows 
+thymic.cell.counts <- thymic.cell.counts[!is.na(thymic.cell.counts$R1), ]
+thymic.cell.melt <- melt(thymic.cell.counts, id.vars=c("Age", "Measure"))
+thymic.cell.melt$Age <- factor(thymic.cell.melt$Age,
+                               levels=c("1w", "4w", "16w", "32w", "52w"))
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.75, fig.width=11.25}
+# summarise the points as the mean +/- SE - joint the mean points with a line
+mean.thymo.count <- apply(thymus.total.cellularity[, c(2:5)], 1, mean)
+sd.thymo.count <- apply(thymus.total.cellularity[, c(2:5)], 1, sd)
+
+thymic.summ.df <- data.frame("Age"=c("1w", "4w", "16w", "32w", "52w"),
+                             "Mean"=mean.thymo.count,
+                             "SD"=sd.thymo.count)
+
+thymic.summ.df$Age <- factor(thymic.summ.df$Age,
+                             levels=c("1w", "4w", "16w", "32w", "52w"))
+thymic.summ.df$AgeInt <- as.numeric(as.character(gsub(thymic.summ.df$Age, pattern="w", replacement="")))
+
+p.total.cell <- ggplot(thymic.summ.df, aes(x=AgeInt, y=Mean)) +
+  geom_errorbar(aes(ymin=Mean-SD, ymax=Mean+SD), width=0.5) +
+  geom_line(group=1) +
+  geom_point(shape=21, size=3.5, fill='grey80') +
+  theme_mike() +
+  scale_x_continuous(labels=c(1, 4, 16, 32, 52), breaks=c(1, 4, 16, 32, 52)) +
+  labs(x="Age (weeks)", y=expression(bold(paste("Total thymic cellularity (x10"^6, ")")))) +
+  expand_limits(y=0)
+
+ggsave(p.total.cell,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure1/Total_cellularity.pdf",
+       height=3.75, width=11.25, useDingbats=FALSE)
+
+p.total.cell
+```
+
+I want a little in-set plot of just EpCam+ (TEC) total cellularity too.
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=2.75, fig.width=4.25}
+# summarise the points as the mean +/- SE - joint the mean points with a line
+mean.tec.count <- apply(tec.total.cellularity[, c(2:5)], 1, mean)
+sd.tec.count <- apply(tec.total.cellularity[, c(2:5)], 1, sd)
+
+tec.summ.df <- data.frame("Age"=c("1w", "4w", "16w", "32w", "52w"),
+                             "Mean"=mean.tec.count,
+                             "SD"=sd.tec.count)
+
+tec.summ.df$Age <- factor(tec.summ.df$Age,
+                          levels=c("1w", "4w", "16w", "32w", "52w"))
+tec.summ.df$AgeInt <- as.numeric(as.character(gsub(tec.summ.df$Age, pattern="w", replacement="")))
+
+p.tec.cell <- ggplot(tec.summ.df, aes(x=AgeInt, y=Mean)) +
+  geom_errorbar(aes(ymin=Mean-SD, ymax=Mean+SD), width=0.5) +
+  geom_line(group=1) +
+  geom_point(shape=21, size=3, fill='grey80') +
+  theme_mike() +
+  scale_x_continuous(labels=c(1, 4, 16, 32, 52), breaks=c(1, 4, 16, 32, 52)) +
+  labs(x="Age (weeks)", y=expression(bold(paste("Total thymic cellularity (x10"^3, ")")))) +
+  expand_limits(y=0)
+
+ggsave(p.tec.cell,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure1/TEC_cellularity.pdf",
+       height=2.25, width=3.25, useDingbats=FALSE)
+
+p.tec.cell
+```
+
+I want a little in-set plot of just EpCam+ (TEC) total cellularity too. Make a ribbon-plot to show the relative proportions of cTEC and mTEC.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# get the mean % for cTEC and mTEC
+# calculate the fraction of all cells in each compartment at each timepoint
+mean.mtechi.count <- apply(mtechi.pcent.cellularity[, c(2:5)], 1, mean)
+mean.mteclo.count <- apply(mteclo.pcent.cellularity[, c(2:5)], 1, mean)
+mean.ctec.count <- apply(ctec.pcent.cellularity[, c(2:5)], 1, mean)
+mean.dsg3.count <- apply(dsg3.pcent.cellularity[, c(2:5)], 1, mean)
+
+
+ctec.count.df <- data.frame("Age"=c("1w", "4w", "16w", "32w", "52w"),
+                            "Freq"=mean.ctec.count, "TEC"=rep("cTEC", 5))
+mtechi.count.df <- data.frame("Age"=c("1w", "4w", "16w", "32w", "52w"),
+                              "Freq"=mean.mtechi.count, "TEC"=rep("mTEC.hi", 5))
+mteclo.count.df <- data.frame("Age"=c("1w", "4w", "16w", "32w", "52w"),
+                              "Freq"=mean.mteclo.count, "TEC"=rep("mTEC.lo", 5))
+dsg3.count.df <- data.frame("Age"=c("1w", "4w", "16w", "32w", "52w"),
+                            "Freq"=mean.dsg3.count, "TEC"=rep("Dsg3+TEC", 5))
+
+alltec.count.df <- do.call(rbind.data.frame,
+                           list("mTEC.hi"=mtechi.count.df,
+                                "mTEC.lo"=mteclo.count.df,
+                                "Dsg3+TEC"=dsg3.count.df,
+                                "cTEC"=ctec.count.df))
+alltec.count.df$Age <- factor(alltec.count.df$Age,
+                              levels=c("1w", "4w", "16w", "32w", "52w"))
+remain.count.df <- data.frame("Age"=c("1w", "4w", "16w", "32w", "52w"), "TEC"=rep("EpCam+", 5),
+                              "Freq"=100 - as.numeric(unlist(by(alltec.count.df$Freq, INDICES=alltec.count.df$Age, FUN=function(X) sum(X)))))
+alltec.count.df <- do.call(rbind.data.frame,
+                           list("all"=alltec.count.df, "rest"=remain.count.df))
+
+# need the fraction and cumulative fraction by age
+# this now needs to be scaled by
+alltec.cumfrac <- data.frame("Cumfrac"=as.numeric(unlist(by(alltec.count.df$Freq, INDICES=alltec.count.df$Age,
+                                                          FUN=function(X) cumsum(X)))),
+                           "Age"=unlist(sapply(c("1w", "4w", "16w", "32w", "52w"), FUN=function(X) rep(X, 5), simplify=FALSE)),
+                           "TEC"=rep(c("mTEC.hi", "mTEC.lo", "Dsg3+TEC", "cTEC", "EpCam+"), 5))
+# remain.cumfrac <- data.frame("Age"=c("1w", "4w", "16w", "32w", "52w"), "TEC"=rep("EpCam+", 5),
+#                              "Cumfrac"=rep(1.0, 5))
+# alltec.cumfrac <- do.call(rbind.data.frame,
+#                           list("all"=alltec.cumfrac, "rest"=remain.cumfrac))
+
+alltec.freq <- merge(alltec.count.df, alltec.cumfrac, by=c('TEC', 'Age'))
+alltec.freq$AgeInt <- as.numeric(as.character(gsub(alltec.freq$Age, pattern="w", replacement="")))
+# set an ordering for clusters
+alltec.freq$TEC <- factor(alltec.freq$TEC,
+                          levels=c("Dsg3+TEC", "mTEC.lo", "mTEC.hi", "cTEC", "EpCam+"))
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.75, fig.width=11.25}
+cell.cols <- c("#f2a242", "#ed7a75", "#6ab2f9", "#b4b8b7", "#fff6be")
+names(cell.cols) <- c("cTEC", "mTEC.lo", "mTEC.hi", "Dsg3+TEC", "EpCam+")
+
+p.tec.rib <- ggplot(alltec.freq,
+       aes(x=AgeInt, ymin=Cumfrac-Freq, ymax=Cumfrac,
+           fill=TEC)) +
+  theme_mike() +
+  labs(x="Age (weeks)", y="% EpCam+ TEC") +
+  scale_fill_manual(values=cell.cols) +
+  scale_x_continuous(labels=c(1, 4, 16, 32, 52), breaks=c(1, 4, 16, 32, 52), limits=c(1, 52)) +
+  scale_y_continuous(breaks=c(0, 50, 100)) +
+  guides(fill=guide_legend(ncol=1, title="")) +
+  theme(legend.position="right",
+        axis.title=element_text(size=18, face='bold'),
+        axis.text=element_text(size=16, face='bold')) +
+  guides(fill=FALSE) +
+  geom_ribbon()
+
+ggsave(p.tec.rib,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure1/TEC_Ribbon.pdf",
+       height=3.75, width=11.25)
+
+p.tec.rib
+```
+
+
+
+
+
+
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+thymus.norm.tra <- read.table("~/Dropbox/AgeingExperiment/Frozen/ThymusQC_SFnorm-ALL.tsv.gz",
+                          sep="\t", h=TRUE, stringsAsFactors=FALSE)
+rownames(thymus.norm.tra) <- thymus.norm.tra$gene_id
+thymus.norm.tra <- thymus.norm.tra[, -ncol(thymus.norm.tra)]
+thymus.norm.tra[is.na(thymus.norm.tra)] <- 0
+
+thymus.norm <- read.table("~/Dropbox/AgeingExperiment/Frozen/ThymusQC_SFnorm.tsv.gz",
+                          sep="\t", h=TRUE, stringsAsFactors=FALSE)
+rownames(thymus.norm) <- thymus.norm$gene_id
+thymus.norm <- thymus.norm[, -ncol(thymus.norm)]
+
+thymus.meta <- read.table("~/Dropbox/AgeingExperiment/Data/ThymusMarker_tSNE_PCA_meta.tsv",
+                          sep="\t", h=TRUE, stringsAsFactors=FALSE)
+
+# create a variable that represents the ages as a single continuous variable
+thymus.meta$AgeInt <- as.numeric(gsub(thymus.meta$Age, pattern="wk", replacement=""))
+thymus.meta$AgeFactor <- ordered(thymus.meta$Age,
+                                 levels=c("1wk", "4wk", "16wk", "32wk", "52wk"))
+thymus.meta$TFIDF.Cluster <- factor(thymus.meta$TFIDF.Cluster,
+                                    levels=c("1", "2", "3", "4", "5", "6", "7", "8", "9", "10"),
+                                    labels=c("1", "2", "3", "4", "5", "6", "7", "8", "9", "10"))
+
+thymus.hvg <- read.table("~/Dropbox/AgeingExperiment/Frozen/Thymus_HVG.tsv",
+                         sep="\t", h=TRUE, stringsAsFactors=FALSE)
+thymus.meta <- thymus.meta[!thymus.meta$TFIDF.Cluster %in% c(4), ]
+# # # get the spike factors
+# thymus.spike <- read.table("~/Dropbox/AgeingExperiment/ThymusMarker_tSNE_PCA_meta.tsv",
+#                           sep="\t", h=TRUE, stringsAsFactors=FALSE)
+# thymus.spike <- thymus.spike[, c("Sample", "SpikeFactor")]
+# thymus.meta <- merge(thymus.meta[, !grepl(colnames())], thymus.spike, by='Sample', all.x=TRUE)
+# thymus.meta$SpikeFactor[is.na(thymus.meta$SpikeFactor)] <- 0
+thymus.norm <- thymus.norm[, intersect(colnames(thymus.norm), thymus.meta$Sample)]
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+thymus.hvg <- find_hvg(thymus.norm, return.ranks=TRUE, p.threshold=1e-3)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+all.genes <- unique(c(rownames(thymus.norm), rownames(thymus.norm.tra)))
+
+ensembl <- useMart("ensembl", "mmusculus_gene_ensembl", host="grch37.ensembl.org", path="/biomart/martservice")
+gene_symbol <- getBM(attributes=c('ensembl_gene_id', 'external_gene_name', 'chromosome_name'),
+                     filters='ensembl_gene_id', mart=ensembl,
+                     values=all.genes)
+rownames(gene_symbol) <- gene_symbol$ensembl_gene_id
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+# read in the hallmarks and map the human gene IDs onto mouse homologs
+# pull in the c4 and c6 gene sets
+source("~/Dropbox/R_sessions/src/generic_functions.R")
+hallmark.geneset <- read.table("~/Dropbox/Genesets/hallmark.c2_ensemblgeneIds.txt",
+                         sep="\t", stringsAsFactors=FALSE, h=TRUE)
+
+ortho.gene_symbol <- getBM(attributes=c('ensembl_gene_id', 'external_gene_name', 'hsapiens_homolog_orthology_type',
+                                  'hsapiens_homolog_ensembl_gene'),
+                     filters='ensembl_gene_id', mart=ensembl,
+                     values=all.genes)
+# remove many 2 one orthologs and many2many that are duplicated
+
+# map the human gene IDs to the mouse ones
+hallmark.merge <- merge(hallmark.geneset, ortho.gene_symbol, by.x='ensembl_gene_id', by.y='hsapiens_homolog_ensembl_gene')
+colnames(hallmark.merge) <- c("hsapiens_ensembl", "GeneSet", "ensembl_gene_id", "external_gene_name", "hsapiens_orthology_type")
+
+# this might take a while!
+hallmark.go <- map2go(hallmark.merge)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+cluster.cols <-  c("#9970ab", "#35978f", "#B0cdc1", "#762a83", "#01665e", "#e7d4e8", "#dfc27d", "#8c510a" ,"#bf812d")
+names(cluster.cols) <- c("1", "2", "3", "5", "6", "7", "8", "9", "10")
+
+age.cols <- viridis(option="magma", n=5)
+#age.cols <- c("#00E4FF", "#006CFF", "#2A00FF", "#B900FF", "#FF008F")
+names(age.cols) <- c("1wk", "4wk", "16wk", "32wk", "52wk")
+
+cell.cols <- c("#f2a242", "#ed7a75", "#6ab2f9", "#b4b8b7")
+names(cell.cols) <- c("cTEC", "mTEClo", "mTEChi", "gmTEC")
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+thymus.meta <- thymus.meta[!thymus.meta$TFIDF.Cluster %in% c("4"), ]
+
+# add an interpretation column for each cluster
+thymus.meta$Interpretation <- "Unknown"
+thymus.meta$Interpretation[thymus.meta$TFIDF.Cluster == "2"] <- "Intertypical TEC"
+thymus.meta$Interpretation[thymus.meta$TFIDF.Cluster == "9"] <- "Perinatal cTEC"
+thymus.meta$Interpretation[thymus.meta$TFIDF.Cluster == "3"] <- "Mature cTEC"
+thymus.meta$Interpretation[thymus.meta$TFIDF.Cluster == "7"] <- "Mature mTEC"
+thymus.meta$Interpretation[thymus.meta$TFIDF.Cluster == "1"] <- "Post-Aire mTEC"
+thymus.meta$Interpretation[thymus.meta$TFIDF.Cluster == "5"] <- "Tuft-like mTEC"
+thymus.meta$Interpretation[thymus.meta$TFIDF.Cluster == "6"] <- "Proliferating TEC"
+thymus.meta$Interpretation[thymus.meta$TFIDF.Cluster == "8"] <- "eTEC1"
+thymus.meta$Interpretation[thymus.meta$TFIDF.Cluster == "10"] <- "eTEC2"
+
+inter.cols <- c("#9970ab", "#35978f", "#B0cdc1", "#762a83", "#01665e", "#e7d4e8", "#dfc27d", "#8c510a" ,"#bf812d")
+names(inter.cols) <- c("Post-Aire mTEC", 'Intertypical TEC',' Mature cTEC', 'Tuft-like mTEC', 
+                       'Proliferating TEC', 'Mature mTEC', 'eTEC1', 'Perinatal cTEC', 'eTEC2')
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+tfidf.tsne <- read.table("~/Dropbox/AgeingExperiment/Data/RemoveClust4.tsv",
+                           sep="\t", header=TRUE, stringsAsFactors=FALSE)
+tfidf.tsne$Sample <- rownames(tfidf.tsne)
+
+colnames(tfidf.tsne) <- c("Dim1", "Dim2", "TFIDF.Cluster", "CellType", "Age", "Sample")
+thymus.meta <- merge(thymus.meta[, !grepl(colnames(thymus.meta), patter="Dim")], tfidf.tsne[, c("Dim1", "Dim2", "Sample")],
+                     by='Sample')
+```
+
+This figure will cover the age-dependent changes in different TEC populations, as well as the overall age-dependent changes in gene expression.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=2.25, fig.width=5.75}
+thymus.meta$TFIDF.Cluster <- factor(thymus.meta$TFIDF.Cluster,
+                                    levels=c(1, 2, 3, 5, 6, 7, 8, 9, 10))
+
+## bar plot with the FACS phenotype contributions to each cluster
+bar.props <- ggplot(thymus.meta[!thymus.meta$TFIDF.Cluster %in% c(4), ], 
+       aes(x=TFIDF.Cluster, fill=CellType)) +
+  geom_bar(position='fill') +
+  theme_classic() +
+  scale_fill_manual(values=cell.cols) +
+  labs(x="Cluster", y="% Cells") +
+  scale_y_continuous(breaks=c(0, 0.5, 1)) +
+  theme(axis.text=element_text(size=14, face='bold', colour='black'),
+        axis.title=element_text(size=16, face='bold')) +
+  guides(fill=FALSE) +
+  #coord_flip() +
+  NULL
+
+ggsave(bar.props,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure2/FACS_props-cluster.png",
+       height=2.25, width=5.75, dpi=300)
+
+bar.props
+```
+
+Show the number of cells is uniform across ages and cell types
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=2.25, fig.width=2.25}
+## bar plot with the FACS phenotype contributions to each cluster
+thymus.meta$AgeInt <- as.factor(thymus.meta$AgeInt)
+
+age.bar <- ggplot(thymus.meta[!thymus.meta$TFIDF.Cluster %in% c(4), ], 
+       aes(x=AgeInt, fill=CellType)) +
+  geom_bar(position='fill') +
+  theme_classic() +
+  scale_fill_manual(values=cell.cols) +
+  labs(x="Age", y="Frequency") +
+  scale_y_continuous(breaks=c(0, 1)) +
+  theme(axis.text=element_text(size=14, face='bold', colour='black'),
+        axis.title=element_text(size=16, face='bold')) +
+  guides(fill=FALSE) +
+  NULL
+
+ggsave(age.bar,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure1/Age-bar.png",
+       height=2.25, width=2.25, dpi=300)
+
+age.bar
+```
+
+```{r}
+thymus.meta$AgeInt <- as.numeric(as.character(thymus.meta$AgeInt))
+
+thymus.meta$TFIDF.Cluster <- factor(thymus.meta$TFIDF.Cluster,
+                                    levels=c(1, 2, 3, 5, 6, 7, 8, 9, 10))
+```
+
+### Marker gene plots
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+marker.dir <- "~/Dropbox/AgeingExperiment/Analysis/Reports/"
+marker.files <- list.files(marker.dir, pattern="marker_genes.tsv")
+
+marker.list <- list()
+for(x in seq_along(marker.files)){
+  m.file <- paste0(marker.dir, marker.files[x])
+  m.cluster <- unlist(strsplit(marker.files[x], split="-"))[1]
+  
+  m.df <- read.table(m.file, sep="\t", header=TRUE, stringsAsFactors=FALSE)
+  m.df$Cluster <- m.cluster
+  
+  # get the rank of the marker gene
+  m.df$Rank <- order(m.df$logFC, decreasing=TRUE)
+  
+  marker.list[[m.cluster]] <- m.df
+}
+
+cluster.markers <- do.call(rbind.data.frame,
+                           marker.list)
+
+top.markers <- cluster.markers[cluster.markers$Rank <= 1000, ]
+# remove cluster 4
+top.markers <- top.markers[!top.markers$Cluster %in% c("Cluster4"), ]
+
+top.markers$Cluster <- factor(top.markers$Cluster,
+                              levels=c("Cluster10", "Cluster9", "Cluster8", "Cluster7", "Cluster6",
+                                       "Cluster5", "Cluster3", "Cluster2", "Cluster1"))
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+marker.goi <- c("Krt80", "Spink5", "Ccl21a", "Krt5", "Prss16", "Cxcl12", "Avil", "Trpm5", "Ccna2", "Pbk",
+                "Aire", "Cd52", "Cd177", "Car8", "Gper1", "Syngr1", "Dpt", "Sod3")
+marker.ensembl <- gene_symbol[gene_symbol$external_gene_name %in% marker.goi, ]$ensembl_gene_id
+
+markers.exprs <- as.data.frame(t(thymus.norm[marker.ensembl, ]))
+colnames(markers.exprs) <- gene_symbol[colnames(markers.exprs), ]$external_gene_name
+# column scale?
+#markers.exprs <- as.data.frame(apply(markers.exprs, 2, function(X) scale(X, center=TRUE)))
+markers.exprs$Sample <- colnames(thymus.norm)
+
+markers.meta <- merge(thymus.meta[, c("Sample", "AgeFactor", "TFIDF.Cluster", "CellType")],
+                      markers.exprs, by='Sample')
+markers.melt <- melt(markers.meta, id.vars=c("Sample", "AgeFactor", "TFIDF.Cluster", "CellType"))
+
+# add the marker-cluster information
+markers.melt.merge <- merge(markers.melt, top.markers[, c("Cluster", "external_gene_name")],
+                            by.x='variable', by.y='external_gene_name')
+
+markers.melt.merge <- markers.melt.merge[!markers.melt.merge$TFIDF.Cluster %in% c(4), ]
+
+markers.melt.merge$TFIDF.Cluster <- factor(markers.melt.merge$TFIDF.Cluster,
+                                           levels=c(10, 9, 8, 7, 6, 5, 3, 2, 1))
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.25, fig.width=15.75}
+# order the marker genes by their cluster
+markers.melt.merge$variable <- factor(markers.melt.merge$variable,
+                                      levels=c("Krt80", "Spink5", "Ccl21a", "Krt5", "Prss16", "Cxcl12", "Avil", "Trpm5", "Ccna2", "Pbk",
+                                               "Aire", "Cd52", "Cd177", "Car8", "Gper1", "Syngr1", "Dpt", "Sod3"))
+
+marker.box <- ggplot(markers.melt.merge, aes(x=TFIDF.Cluster, y=value, fill=TFIDF.Cluster)) +
+  geom_boxplot(outlier.size=0.5, size=1) +
+  theme_classic() +
+  scale_fill_manual(values=cluster.cols) +
+  facet_grid(.~variable, scales="free_x") +
+  theme(strip.text.x=element_text(angle=0, face='bold', size=16),
+        axis.title=element_text(face='bold', size=20),
+        strip.background=element_blank(),
+        axis.line=element_blank(),
+        axis.text=element_blank(),
+        axis.ticks=element_blank()) +
+  #scale_y_continuous(breaks=c(-1.5, 11)) +
+  guides(fill=FALSE) +
+  labs(x="Cluster", y=expression(bold(paste("Log"[2], " expression")))) +
+  coord_flip() +
+  NULL
+
+ggsave(marker.box,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure1/Marker_genes-boxplot.png",
+       height=3.25, width=15.75, dpi=300)
+
+marker.box
+```
+
+Also make a heatmap of these genes as an alternative way of viewing these marker genes.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=7.75, fig.width=7.25}
+# markers.meta has genes in the columns and cells in the rows
+mark.hmat <- as.matrix(markers.meta[, c(5:ncol(markers.meta))])
+rownames(mark.hmat) <- markers.meta$Sample
+
+# gene order
+col.order <- c("Sod3", "Dpt", "Cd177", "Car8", "Syngr1", "Gper1", "Prss16", "Cxcl12", "Ccl21a", "Krt5",
+               "Ccna2", "Pbk", "Aire", "Cd52", "Krt80", "Spink5", "Avil", "Trpm5")
+  
+# annotate cells
+rownames(markers.meta) <- markers.meta$Sample
+marker.annot <- markers.meta[rownames(mark.hmat), c("Sample", "TFIDF.Cluster")]
+# add an interpretation column for each cluster
+marker.annot$Cluster <- "Unknown"
+marker.annot$Cluster[marker.annot$TFIDF.Cluster == "2"] <- "Intertypical TEC"
+marker.annot$Cluster[marker.annot$TFIDF.Cluster == "9"] <- "Perinatal cTEC"
+marker.annot$Cluster[marker.annot$TFIDF.Cluster == "3"] <- "Mature cTEC"
+marker.annot$Cluster[marker.annot$TFIDF.Cluster == "7"] <- "Mature mTEC"
+marker.annot$Cluster[marker.annot$TFIDF.Cluster == "1"] <- "Post-Aire mTEC"
+marker.annot$Cluster[marker.annot$TFIDF.Cluster == "5"] <- "Tuft-like mTEC"
+marker.annot$Cluster[marker.annot$TFIDF.Cluster == "6"] <- "Proliferating TEC"
+marker.annot$Cluster[marker.annot$TFIDF.Cluster == "8"] <- "eTEC1"
+marker.annot$Cluster[marker.annot$TFIDF.Cluster == "10"] <- "eTEC2"
+
+names(inter.cols) <- c("Post-Aire mTEC", 'Intertypical TEC','Mature cTEC', 'Tuft-like mTEC', 
+                       'Proliferating TEC', 'Mature mTEC', 'eTEC1', 'Perinatal cTEC', 'eTEC2')
+
+marker.annot$Cluster <- factor(marker.annot$Cluster,
+                                 levels=c("eTEC2", "eTEC1", "Perinatal cTEC",
+                                          "Mature cTEC", "Intertypical TEC", "Proliferating TEC", 
+                                          "Mature mTEC", "Post-Aire mTEC", "Tuft-like mTEC"))
+marker.annot <- data.frame("Cluster"=marker.annot[, c("Cluster")])
+rownames(marker.annot) <- markers.meta$Sample
+
+annot.cols <- list("Cluster"=inter.cols)
+
+# remove genes with all 0 median expression
+row.order <- order(marker.annot$Cluster)
+
+#hm.col <- colorRampPalette(brewer.pal(9, "RdPu"))(100)
+hm.col <- viridis(100, alpha=1, direction=1)
+
+row.annot <- HeatmapAnnotation(df=marker.annot[order(marker.annot$Cluster), , drop=FALSE],
+                               col=list("Cluster"=inter.cols),
+                               annotation_name_gp=gpar(fontsize=24),
+                               width=unit(1, "cm"),
+                               which="row")
+
+# row.annot <- HeatmapAnnotation(df=marker.gene.annot,
+#                                col=list("Pathway"=path.cols),
+#                                width=unit(0.2, "cm"),
+#                                which="row")
+
+ht_list = Heatmap(mark.hmat[row.order, col.order],
+                  name="Expression",
+                  #combined_name_fun=function(X) str_wrap(X, width=20),
+                  show_column_names=TRUE,
+                  cluster_columns=FALSE,
+                  cluster_rows=FALSE,
+                  #split=as.numeric(marker.gene.annot$Pathway),
+                  column_names_gp=gpar(fontsize=24),
+                  col=hm.col, column_title="Genes", row_title="Cells") +
+  row.annot
+
+pdf("~/Dropbox/AgeingExperiment/Paper/Figures/Figure1/Marker_gene-heatmap.pdf",
+    height=9.75, width=15.5)
+draw(ht_list, newpage=TRUE, heatmap_legend_side="right")
+dev.off()
+
+draw(ht_list, newpage=TRUE, heatmap_legend_side="right")
+```
+
+
+### All TEC differential abundance
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# treat each age as a separate sample/condition
+thymus.red <- thymus.meta[, c("SortDay", "CellType", "TFIDF.Cluster", "Sample", "AgeInt", "Interpretation")]
+thymus.red$TFIDF.Cluster <- as.factor(thymus.red$TFIDF.Cluster)
+
+thymus.list <- list()
+for(x in seq_along(unique(thymus.meta$SortDay))){
+  plate <- unique(thymus.meta$SortDay)[x]
+  plate.red <- thymus.red[thymus.red$SortDay == plate, ]
+  plate.ages <- unique(plate.red$AgeInt)
+  for(i in seq_along(plate.ages)){
+    age <- unique(plate.ages)[i]
+    age.red <- plate.red[plate.red$AgeInt == age, ]
+    
+    age.mat <- as.data.frame(table(age.red$TFIDF.Cluster, age.red$CellType))
+    colnames(age.mat) <- c("Cluster", "CellType", "Freq")
+    age.mat$Age <- age
+    age.mat$Day <- plate
+    
+    thymus.list[[paste(paste0("Day", plate),
+                       paste0(age, "wk"), sep=".")]] <- age.mat
+  }
+}
+
+thymus.df <- do.call(rbind.data.frame,
+                     thymus.list)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# split by cell type and merge into a dataframe for each
+# clusters in the rows, samples for the columns
+list.names <- names(thymus.list)
+
+ctec.count.list <- list()
+mteclo.count.list <- list()
+mtechi.count.list <- list()
+gmtec.count.list <- list()
+alltec.count.list <- list()
+
+ctec.meta.list <- list()
+mteclo.meta.list <- list()
+mtechi.meta.list <- list()
+gmtec.meta.list <- list()
+alltec.meta.list <- list()
+
+cells <- unique(thymus.meta$CellType)
+for(q in seq_along(list.names)){
+  nom <- list.names[q]
+  nom.tab <- thymus.list[[nom]]
+  for(i in seq_along(cells)){
+    ctype <- cells[i]
+    if(ctype %in% unique(nom.tab$CellType)){
+      cell.count <- nom.tab[nom.tab$CellType == ctype, c("Cluster", "Freq")]
+      colnames(cell.count) <- c("Cluster", nom)
+      cell.meta <- nom.tab[nom.tab$CellType == ctype, c("CellType", "Age", "Day")]
+    
+      if(ctype == "cTEC"){
+        cell.meta$Sample <- nom
+        ctec.count.list[[nom]] <- cell.count
+        ctec.meta.list[[nom]] <- cell.meta[!duplicated(cell.meta), ]
+        }
+      else if(ctype == "mTEClo"){
+        cell.meta$Sample <- nom
+        mteclo.count.list[[nom]] <- cell.count
+        mteclo.meta.list[[nom]] <- cell.meta[!duplicated(cell.meta), ]
+        }
+      else if(ctype == "mTEChi"){
+        cell.meta$Sample <- nom
+        mtechi.count.list[[nom]] <- cell.count
+        mtechi.meta.list[[nom]] <- cell.meta[!duplicated(cell.meta), ]
+      }
+      else if(ctype == "gmTEC"){
+        cell.meta$Sample <- nom
+        gmtec.count.list[[nom]] <- cell.count
+        gmtec.meta.list[[nom]] <- cell.meta[!duplicated(cell.meta), ]
+      }
+    }
+    cell.count <- nom.tab[, c("Cluster", "Freq")]
+    all.count <- do.call(cbind.data.frame,
+                         list("Cluster"=levels(cell.count$Cluster),
+                              "Freq"=as.numeric(by(data=cell.count$Freq, 
+                                                   INDICES=cell.count$Cluster, FUN=sum))))
+    colnames(all.count) <- c("Cluster", nom)
+    alltec.count.list[[nom]] <- all.count
+  }
+}
+
+ctec.counts <- Reduce(x=ctec.count.list,
+                      f=function(x, y) merge(x, y, by='Cluster'))
+rownames(ctec.counts) <- paste0("Cluster", ctec.counts$Cluster)
+ctec.counts <- ctec.counts[, -1]
+
+mteclo.counts <- Reduce(x=mteclo.count.list,
+                      f=function(x, y) merge(x, y, by='Cluster'))
+rownames(mteclo.counts) <- paste0("Cluster", mteclo.counts$Cluster)
+mteclo.counts <- mteclo.counts[, -1]
+
+mtechi.counts <- Reduce(x=mtechi.count.list,
+                      f=function(x, y) merge(x, y, by='Cluster'))
+rownames(mtechi.counts) <- paste0("Cluster", mtechi.counts$Cluster)
+mtechi.counts <- mtechi.counts[, -1]
+
+gmtec.counts <- Reduce(x=gmtec.count.list,
+                      f=function(x, y) merge(x, y, by='Cluster'))
+rownames(gmtec.counts) <- paste0("Cluster", gmtec.counts$Cluster)
+gmtec.counts <- gmtec.counts[, -1]
+
+ctec.meta <- do.call(rbind.data.frame,
+                     ctec.meta.list)
+mteclo.meta <- do.call(rbind.data.frame,
+                       mteclo.meta.list)
+mtechi.meta <- do.call(rbind.data.frame,
+                       mtechi.meta.list)
+gmtec.meta <- do.call(rbind.data.frame,
+                      gmtec.meta.list)
+
+# need to adjust for which sorting phenotype cells were derived from
+alltec.counts <- do.call(cbind.data.frame,
+                         list("mteclo"=mteclo.counts,
+                              "mtechi"=mtechi.counts,
+                              "gmtec"=gmtec.counts,
+                              "ctec"=ctec.counts))
+
+# alltec.counts <- Reduce(x=alltec.count.list,
+#                       f=function(x, y) merge(x, y, by='Cluster'))
+# rownames(alltec.counts) <- paste0("Cluster", alltec.counts$Cluster)
+# alltec.counts <- alltec.counts[, -1]
+
+alltec.sort <- unlist(lapply(strsplit(colnames(alltec.counts), fixed=TRUE, split="."),
+                             FUN=function(X) paste0(X[1])))
+alltec.days <- unlist(lapply(strsplit(colnames(alltec.counts), fixed=TRUE, split="."),
+                                FUN=function(X) paste0(X[2])))
+alltec.age <- unlist(lapply(strsplit(colnames(alltec.counts), fixed=TRUE, split="."),
+                                FUN=function(X) paste0(X[3])))
+
+alltec.meta <- do.call(cbind.data.frame,
+                       list("Sample"=colnames(alltec.counts),
+                            "CellType"=alltec.sort,
+                            "Age"=alltec.age,
+                            "Day"=alltec.days))
+alltec.meta$AgeInt <- as.numeric(as.character(gsub(alltec.meta$Age, pattern="wk", replacement="")))
+alltec.meta$Age <- factor(alltec.meta$Age,
+                          levels=c("1wk", "4wk", "16wk", "32wk", "52wk"),
+                          labels=c("1wk", "4wk", "16wk", "32wk", "52wk"))
+
+# remove cluster 4
+alltec.counts <- alltec.counts[!grepl(rownames(alltec.counts), pattern="Cluster4"), ]
+alltec.meta <- alltec.meta[alltec.meta$Sample %in% colnames(alltec.counts), ]
+```
+
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.25, fig.width=3.75}
+#############
+## All TEC ##
+#############
+alltec.dge <- DGEList(alltec.counts, lib.size=colSums(alltec.counts))
+
+# filter low abundance clusters?
+alltec.meta$AgeInt <- ordered(as.numeric(gsub(as.character(alltec.meta$AgeInt), pattern="wk", replacement="")))
+#alltec.meta$AgeInt <- as.numeric(gsub(as.character(alltec.meta$AgeInt), pattern="wk", replacement=""))
+#alltec.meta$AgeQuad <- log2(alltec.meta$AgeInt ** 2)
+#alltec.meta$AgeInt <- log2(alltec.meta$AgeInt)
+
+alltec.design <- model.matrix(~AgeInt + CellType, alltec.meta)
+alltec.dge <- estimateDisp(alltec.dge, alltec.design)
+
+alltec.fit <- glmQLFit(alltec.dge, alltec.design, robust=TRUE)
+alltec.res <- as.data.frame(topTags(glmQLFTest(alltec.fit, coef=2), n=Inf))
+alltec.res$Sig <- as.factor(as.numeric(alltec.res$FDR <= 0.01))
+alltec.res$Cluster <- rownames(alltec.res)
+
+# add an interpretation column for each cluster
+alltec.res$Interpretation <- "Unknown"
+alltec.res$Interpretation[alltec.res$Cluster == "Cluster2"] <- "Intertypical TEC"
+alltec.res$Interpretation[alltec.res$Cluster == "Cluster9"] <- "Perinatal cTEC"
+alltec.res$Interpretation[alltec.res$Cluster == "Cluster3"] <- "Mature cTEC"
+alltec.res$Interpretation[alltec.res$Cluster == "Cluster7"] <- "Mature mTEC"
+alltec.res$Interpretation[alltec.res$Cluster == "Cluster1"] <- "Post-Aire mTEC"
+alltec.res$Interpretation[alltec.res$Cluster == "Cluster5"] <- "Tuft-like mTEC"
+alltec.res$Interpretation[alltec.res$Cluster == "Cluster6"] <- "Proliferating TEC"
+alltec.res$Interpretation[alltec.res$Cluster == "Cluster8"] <- "eTEC1"
+alltec.res$Interpretation[alltec.res$Cluster == "Cluster10"] <- "eTEC2"
+
+alltec.res$Label <- alltec.res$Interpretation
+alltec.res$Label[alltec.res$Sig == 0] <- ""
+
+# volcano plots are probably better here
+alltec.volcano <- ggplot(alltec.res, aes(x=logFC, y=-log10(FDR), fill=Sig)) +
+  geom_point(shape=21, size=3) +
+  scale_fill_manual(values=c("black", "firebrick1")) +
+  theme_mike() +
+  guides(fill=FALSE) +
+  labs(x=expression(paste(Delta, "cellularity (per week)")),
+       y=expression(paste("-log"[10], " FDR"))) +
+  geom_label_repel(aes(label=Label),
+                   colour='black',
+                   fill='white',
+                   #nudge_x=0.01,
+                   #nudge_y=0.01,
+                   size=5)
+ggsave(alltec.volcano,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure1/AllTEC-DiffAbundance-volcano.png",
+       height=4.25, width=3.75, dpi=300)
+
+alltec.volcano
+```
+
+These are the linear changes, what about the non-linear ones?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.75, fig.width=4.25}
+#############
+## All TEC ##
+#############
+quad.alltec.res <- as.data.frame(topTags(glmQLFTest(alltec.fit, coef=3), n=Inf))
+quad.alltec.res$Sig <- as.factor(as.numeric(quad.alltec.res$FDR <= 0.01))
+quad.alltec.res$Cluster <- rownames(quad.alltec.res)
+
+# add an interpretation column for each cluster
+quad.alltec.res$Interpretation <- "Unknown"
+quad.alltec.res$Interpretation[quad.alltec.res$Cluster == "Cluster2"] <- "Intertypical TEC"
+quad.alltec.res$Interpretation[quad.alltec.res$Cluster == "Cluster9"] <- "Perinatal cTEC"
+quad.alltec.res$Interpretation[quad.alltec.res$Cluster == "Cluster3"] <- "Mature cTEC"
+quad.alltec.res$Interpretation[quad.alltec.res$Cluster == "Cluster7"] <- "Mature mTEC"
+quad.alltec.res$Interpretation[quad.alltec.res$Cluster == "Cluster1"] <- "Post-Aire mTEC"
+quad.alltec.res$Interpretation[quad.alltec.res$Cluster == "Cluster5"] <- "Tuft-like mTEC"
+quad.alltec.res$Interpretation[quad.alltec.res$Cluster == "Cluster6"] <- "Proliferating TEC"
+quad.alltec.res$Interpretation[quad.alltec.res$Cluster == "Cluster8"] <- "eTEC1"
+quad.alltec.res$Interpretation[quad.alltec.res$Cluster == "Cluster10"] <- "eTEC2"
+
+quad.alltec.res$Label <- quad.alltec.res$Interpretation
+quad.alltec.res$Label[quad.alltec.res$Sig == 0] <- ""
+
+# volcano plots are probably better here
+quad.alltec.volcano <- ggplot(quad.alltec.res, aes(x=logFC, y=-log10(FDR), fill=Sig)) +
+  geom_point(shape=21, size=3) +
+  scale_fill_manual(values=c("black", "firebrick1")) +
+  theme_mike() +
+  guides(fill=FALSE) +
+  labs(x=expression(paste(Delta, "cellularity (per week)")),
+       y=expression(paste("-log"[10], " FDR"))) +
+  geom_label_repel(aes(label=Label),
+                   colour='black',
+                   fill='white',
+                   #nudge_x=0.01,
+                   #nudge_y=0.01,
+                   size=5)
+ggsave(quad.alltec.volcano,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure1/AllTEC_quadratic-DiffAbundance-volcano.png",
+       height=4.25, width=3.75, dpi=300)
+
+quad.alltec.volcano
+```
+
+Present the combined results of the linear and quadratic model terms.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.5, fig.width=4.25}
+set.seed(42)
+alltec.res$Model <- "Linear"
+quad.alltec.res$Model <- "Quadratic"
+
+model.alltec.res <- do.call(rbind.data.frame,
+                            list("lin"=alltec.res,
+                                 "quad"=quad.alltec.res))
+
+# volcano plots are probably better here
+mod.alltec.volcano <- ggplot(model.alltec.res, aes(x=logFC, y=-log10(FDR), fill=Sig)) +
+  geom_point(shape=21, size=3) +
+  scale_fill_manual(values=c("black", "firebrick1")) +
+  theme_mike() +
+  guides(fill=FALSE) +
+  labs(x=expression(paste(Delta, "cellularity (per week)")),
+       y=expression(bold(paste("-log"[10], " FDR")))) +
+  scale_x_continuous(limits=c(-6, 6)) +
+  scale_y_continuous(limits=c(0, 15), breaks=c(0, 3, 6, 9, 12, 15)) +
+  geom_label_repel(aes(label=Label),
+                   colour='black', fontface='bold',
+                   fill='white', fontfamily='Arial',
+                   #nudge_x=0.1,
+                   #nudge_y=1,
+                   size=2.5) +
+  theme(strip.background=element_rect(colour='white', fill='white'),
+        axis.text=element_text(size=12),
+        axis.title=element_text(size=15, face='bold')) +
+  facet_wrap(~Model, ncol=2)
+
+ggsave(mod.alltec.volcano,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure1/AllTEC_both-DiffAbundance-volcano.pdf",
+       height=3.5, width=5.25, useDingbats=FALSE)
+
+mod.alltec.volcano
+```
+
+Create a ribbon plot of all clusters ordered by age
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.75, fig.width=12.75}
+# plot the scaled abundances by age
+# weight these by the fraction coming from each sort type at that age
+size.norms <- colSums(alltec.counts)
+age.day.cluster.freq <- as.data.frame(xtabs(~TFIDF.Cluster + SortDay + AgeInt, data=thymus.meta))
+cell.age.tab <- table(thymus.meta$CellType, thymus.meta$AgeInt)
+p.sort <- melt(apply(cell.age.tab, 1, FUN=function(X) X/apply(cell.age.tab, 2, sum)))
+colnames(p.sort) <- c("AgeInt", "CellType", "Freq")
+
+alltec.counts.scale <- as.data.frame(apply(alltec.counts, 1, function(X) X/size.norms))
+alltec.counts.scale[is.na(alltec.counts.scale)] <- 0
+alltec.counts.scale <- alltec.counts.scale[c("Cluster1", "Cluster2", "Cluster3", "Cluster5", "Cluster6",
+                                             "Cluster7", "Cluster8", "Cluster9", "Cluster10")]
+alltec.counts.scale$Sample <- rownames(alltec.counts.scale)
+alltec.counts.melt <- melt(alltec.counts.scale, id.vars=c("Sample"))
+
+alltec.scale.merge <- merge(alltec.counts.melt, alltec.meta, by='Sample')
+alltec.scale.merge$Age <- as.factor(alltec.scale.merge$Age)
+colnames(alltec.scale.merge) <- c("Sample", "Cluster", "value", "CellType", "Age", "Day", "AgeInt")
+
+# weighted sum over the cell proportions at each sort day, age and cluster
+scale.list <- list()
+ages <- levels(alltec.scale.merge$AgeInt)
+clusters <- unique(alltec.scale.merge$Cluster)
+days <- unique(alltec.scale.merge$Day)
+
+for(x in seq_along(days)){
+  dy <- days[x]
+  dy.df <- alltec.scale.merge[alltec.scale.merge$Day %in% dy, ]
+  for(i in seq_along(ages)){
+    age.i <- ages[i]
+    age.df <- dy.df[dy.df$AgeInt %in% age.i, ]
+    
+    for(j in seq_along(clusters)){
+      clust.j <- clusters[j]
+      clust.df <- age.df[age.df$Cluster %in% clust.j, ]
+      
+      sort.freq <- p.sort[p.sort$AgeInt %in% c(age.i), ]
+      
+      # can I assume that the ordering of cell types is always the same?
+      ctec.sum <- clust.df$value[clust.df$CellType %in% c("ctec")] * sort.freq$Freq[sort.freq$CellType %in% c("cTEC")]
+      mteclo.sum <- clust.df$value[clust.df$CellType %in% c("mteclo")] * sort.freq$Freq[sort.freq$CellType %in% c("mTEClo")]
+      mtechi.sum <- clust.df$value[clust.df$CellType %in% c("mtechi")] * sort.freq$Freq[sort.freq$CellType %in% c("mTEChi")]
+      gmtec.sum <- clust.df$value[clust.df$CellType %in% c("gmtec")] * sort.freq$Freq[sort.freq$CellType %in% c("gmTEC")]
+        
+      day.prop <- sum(c(ctec.sum, mteclo.sum, mtechi.sum, gmtec.sum))
+      sum.tec.df <- data.frame("Day"=dy, "Cluster"=clust.j, "Age"=paste0(age.i, "wk"), "Freq"=day.prop)
+      scale.list[[paste(dy, clust.j, age.i, sep=".")]] <- sum.tec.df
+    }
+  }
+}
+
+all.scaled.sum <- do.call(rbind.data.frame,
+                          scale.list)
+
+all.scaled.sum$Cluster <- factor(all.scaled.sum$Cluster,
+                                 levels=c("Cluster1", "Cluster2", "Cluster3", "Cluster4", "Cluster5",
+                                          "Cluster6", "Cluster7", "Cluster8", "Cluster9", "Cluster10"),
+                                 labels=c("Cluster1", "Cluster2", "Cluster3", "Cluster4", "Cluster5",
+                                          "Cluster6", "Cluster7", "Cluster8", "Cluster9", "Cluster10"))
+
+# add an interpretation column for each cluster
+all.scaled.sum$Interpretation <- "Unknown"
+all.scaled.sum$Interpretation[all.scaled.sum$Cluster == "Cluster2"] <- "Intertypical TEC"
+all.scaled.sum$Interpretation[all.scaled.sum$Cluster == "Cluster9"] <- "Perinatal cTEC"
+all.scaled.sum$Interpretation[all.scaled.sum$Cluster == "Cluster3"] <- "Mature cTEC"
+all.scaled.sum$Interpretation[all.scaled.sum$Cluster == "Cluster7"] <- "Mature mTEC"
+all.scaled.sum$Interpretation[all.scaled.sum$Cluster == "Cluster1"] <- "Post-Aire mTEC"
+all.scaled.sum$Interpretation[all.scaled.sum$Cluster == "Cluster5"] <- "Tuft-like mTEC"
+all.scaled.sum$Interpretation[all.scaled.sum$Cluster == "Cluster6"] <- "Proliferating TEC"
+all.scaled.sum$Interpretation[all.scaled.sum$Cluster == "Cluster8"] <- "eTEC1"
+all.scaled.sum$Interpretation[all.scaled.sum$Cluster == "Cluster10"] <- "eTEC2"
+
+alltec.abundance <- ggplot(all.scaled.sum, aes(x=Age, y=Freq, fill=Age)) +
+  geom_boxplot(alpha=0.6) +
+  geom_jitter(shape=21) +
+  theme_mike() +
+  #scale_fill_manual(values=age.cols) +
+  scale_fill_viridis(discrete=TRUE, option="magma") +
+  facet_wrap(~Interpretation, ncol=5, scales="free_y") +
+  expand_limits(y=0) +
+  #scale_y_continuous(limits=c(0, 0.4), oob=squish) +
+  theme(axis.text.x=element_text(size=10),
+        strip.text=element_text(size=10)) +
+  labs(x="Age", y="Relative Proportion")
+
+ggsave(alltec.abundance,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure1/AllTEC-DiffAbundance-boxplot.png",
+       height=4.75, width=12.75, dpi=300)
+
+alltec.abundance
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=2.25, fig.width=12.75}
+top.clust <- c("Cluster1", "Cluster2", "Cluster6", "Cluster7", "Cluster9", "Cluster10")
+
+alltec.top.clusters <- ggplot(all.scaled.sum[all.scaled.sum$Cluster %in% top.clust,], 
+       aes(x=Age, y=Freq, fill=Age)) +
+  geom_boxplot(alpha=0.5) +
+  geom_jitter(shape=21, position=position_jitterdodge(jitter.width=1)) +
+  theme_mike() +
+  scale_fill_viridis(discrete=TRUE, option="magma") +
+  #scale_fill_manual(values=age.cols) +
+  guides(fill=FALSE) +
+  #guides(fill=guide_legend(title=NULL)) +
+  facet_wrap(~Interpretation, ncol=6, scales="free_y") +
+  theme(axis.text=element_text(size=13),
+        axis.ticks.x=element_blank(),
+        axis.text.x=element_blank(), 
+        axis.title=element_text(size=16, face='bold'),
+        panel.grid.major=element_blank(),
+        strip.text=element_text(size=12),
+        strip.background=element_rect(colour='white', fill='white')) +
+  labs(x="Age (weeks)", y="% TEC") +
+  NULL
+
+ggsave(alltec.top.clusters,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure1/AllTEC-DiffAbundance_topclusters-boxplot.png",
+       height=2.25, width=12.75, dpi=300)
+
+alltec.top.clusters
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# need to calculate the fraction of cells at a time point in each cluster for each cell type
+alltec.table <- as.data.frame(xtabs(~TFIDF.Cluster + AgeFactor + CellType, data=thymus.meta))
+colnames(alltec.table) <- c("Cluster", "Age", "CellType", "Freq")
+alltec.table$Cluster <- paste0("Cluster", alltec.table$Cluster)
+alltec.table <- alltec.table[!alltec.table$Cluster %in% c("Cluster4"), ]
+
+alltec.table$Cluster <- factor(alltec.table$Cluster,
+                            levels=paste0("Cluster", c("1", "2", "3", "5", "6", "7", "8", "9", "10")),
+                            labels=paste0("Cluster", c("1", "2", "3", "5", "6", "7", "8", "9", "10")))
+
+# calculate the fraction of all cells in each cluster at each timepoint
+# this needs to be scaled by the probability of each sorting phenotype
+clusters <- levels(alltec.table$Cluster)
+ages <- levels(alltec.table$Age)
+scale.cumulative.list <- list()
+
+for(i in seq_along(ages)){
+  age.i <- ages[i]
+  age.df <- alltec.table[alltec.table$Age %in% age.i, ]
+  
+  clust.list <- list()
+  for(x in seq_along(clusters)){
+    clust.x <- clusters[x]
+    clust.df <- age.df[age.df$Cluster %in% clust.x, ]
+    
+    sort.freq <- p.sort[p.sort$AgeInt %in% gsub(age.i, pattern="wk", replacement=""), ]
+    
+    # can I assume that the ordering of cell types is always the same?
+    clust.df$Weight <- clust.df$Freq * sort.freq$Freq
+    age.frac <- sum(clust.df$Weight)
+    clust.frac.df <- data.frame("Age"=age.i, "Cluster"=clust.x, "Freq"=age.frac)
+    
+    clust.list[[clust.x]] <- clust.frac.df
+  }
+  age.frac.df <- do.call(rbind.data.frame,
+                         clust.list)
+  age.frac.df$Frac <- age.frac.df$Freq/sum(age.frac.df$Freq)
+  scale.cumulative.list[[age.i]] <- age.frac.df
+}
+
+alltec.summed <- do.call(rbind.data.frame,
+                         scale.cumulative.list)
+
+# need the fraction and cumulative fraction by age
+# this now needs to be scaled by
+#alltec.summed$Frac <- as.numeric(unlist(by(alltec.summed$Freq, INDICES=alltec.summed$Age, FUN=function(X) X/sum(X))))
+alltec.cumfrac <- data.frame("Cumfrac"=as.numeric(unlist(by(alltec.summed$Frac, INDICES=alltec.summed$Age, 
+                                                          FUN=function(X) cumsum(X)))),
+                           "Age"=unlist(sapply(ages, FUN=function(X) rep(X, length(clusters)), simplify=FALSE)),
+                           "Cluster"=rep(clusters, length(ages)))
+
+alltec.freq <- merge(alltec.summed, alltec.cumfrac, by=c('Cluster', 'Age'))
+alltec.freq$AgeInt <- as.numeric(as.character(gsub(alltec.freq$Age, pattern="wk", replacement="")))
+# set an ordering for clusters
+# add an interpretation column for each cluster
+# add an interpretation column for each cluster
+alltec.freq$Interpretation <- "Unknown"
+alltec.freq$Interpretation[alltec.freq$Cluster == "Cluster2"] <- "Intertypical TEC"
+alltec.freq$Interpretation[alltec.freq$Cluster == "Cluster9"] <- "Perinatal cTEC"
+alltec.freq$Interpretation[alltec.freq$Cluster == "Cluster3"] <- "Mature cTEC"
+alltec.freq$Interpretation[alltec.freq$Cluster == "Cluster7"] <- "Mature mTEC"
+alltec.freq$Interpretation[alltec.freq$Cluster == "Cluster1"] <- "Post-Aire mTEC"
+alltec.freq$Interpretation[alltec.freq$Cluster == "Cluster5"] <- "Tuft-like mTEC"
+alltec.freq$Interpretation[alltec.freq$Cluster == "Cluster6"] <- "Proliferating TEC"
+alltec.freq$Interpretation[alltec.freq$Cluster == "Cluster8"] <- "eTEC1"
+alltec.freq$Interpretation[alltec.freq$Cluster == "Cluster10"] <- "eTEC2"
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=2.5, width=5.25}
+# force everything to start at 0?
+all.ribbon <- ggplot(alltec.freq, 
+                     aes(x=AgeInt, ymin=Cumfrac, ymax=Cumfrac - Frac,
+                       fill=Interpretation)) +
+  theme_mike() +
+  labs(x="Age (weeks)", y="Frequency") +
+  scale_fill_manual(values=inter.cols) +
+  scale_x_continuous(labels=c(1, 4, 16, 32, 52), breaks=c(1, 4, 16, 32, 52)) +
+  scale_y_continuous(breaks=c(0, 0.5, 1)) +
+  guides(fill=guide_legend(ncol=1, title="")) +
+  theme(legend.position="right",
+        axis.title=element_text(size=18, face='bold'),
+        axis.text=element_text(size=16, face='bold')) +
+  guides(fill=FALSE) +
+  geom_ribbon()
+
+ggsave(all.ribbon,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure1/All-Clusters-ribbon.png",
+       height=2.5, width=5.25, dpi=300)
+
+all.ribbon
+```
+
+
+## Figure 3 - Medulla
+
+This can cover the changes in the medulla with age - both gene expression and pGE.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+counts.matrix <- read.table("~/Dropbox/AgeingExperiment/Merged_counts.txt.gz",
+                            sep="\t", head=TRUE, stringsAsFactors=FALSE)
+rownames(counts.matrix) <- counts.matrix$Geneid
+
+cell.ids <- colnames(thymus.norm)
+thymus.counts <- counts.matrix[, colnames(counts.matrix) %in% cell.ids]
+# remove ERCC genes
+thymus.counts <- thymus.counts[!grepl(rownames(thymus.counts), pattern="ERCC"), ]
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# downsample within each population, downsample to the required proportion for the age with the lowest counts
+set.seed(42)
+cell.pops <- unique(thymus.meta$TFIDF.Cluster)
+down.list <- list()
+for(x in seq_along(cell.pops)){
+  pop.cells <- thymus.meta$Sample[thymus.meta$TFIDF.Cluster == cell.pops[x]]
+  pop.counts <- thymus.counts[, pop.cells]
+  
+  min.count <- min(colSums(pop.counts))
+  min.prop <- min.count/colSums(pop.counts)
+  
+  pop.downsample <- as.data.frame(downsampleMatrix(as.matrix(pop.counts),
+                                                   prop=min.prop, bycol=TRUE))
+  colnames(pop.downsample) <- pop.cells
+  rownames(pop.downsample) <- rownames(thymus.counts)
+  pop.downsample$gene_id <- rownames(thymus.counts)
+  
+  down.list[[cell.pops[x]]] <- pop.downsample
+}
+
+thymus.downsample <- Reduce(x=down.list,
+                            f=function(x, y) merge(x, y, by='gene_id'))
+rownames(thymus.downsample) <- thymus.downsample$gene_id
+thymus.downsample <- thymus.downsample[, -1]
+```
+
+OK, I have a matrix where I have down-sampled across ages, but within each cell population.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+aire.class <- read.table("~/Dropbox/ETACS/Aire-class.data",
+                         sep="\t", head=TRUE, stringsAsFactors=FALSE)
+
+tra.class <- read.table("~/Dropbox/fantom5/TRA-FANTOM5-Tissues.tsv",
+                     h=T, stringsAsFactors=F, sep="\t")
+all.tras <- tra.class$ensembl.gene[tra.class$tau >= 0.8]
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# calculate the #genes detected per cell for each cell population.
+cell.ids <- colnames(thymus.downsample)
+genes.list.down <- list()
+
+tissues <- unique(tra.class$Tissue)
+
+for(i in seq_along(cell.ids)){
+  cell.exprs <- thymus.downsample[, cell.ids[i]]
+  names(cell.exprs) <- rownames(thymus.downsample)
+  cell.detect <- cell.exprs[cell.exprs > 1]
+  
+  # aire categories
+  tra.obs <- cell.detect[names(cell.detect) %in% all.tras]
+  aire.depend <- cell.detect[names(cell.detect) %in% aire.class$gene_id[aire.class$type == "aire-dependent"]]
+  aire.enhance <- cell.detect[names(cell.detect) %in% aire.class$gene_id[aire.class$type == "aire-enhanced"]]
+  
+  cell.res <- c(length(cell.detect), length(tra.obs), length(aire.depend), length(aire.enhance))
+  names(cell.res) <- c("Detected", "TRA.Detect", "Aire.Depend", "Aire.Enhance")
+  
+  # tissue categories
+  for(q in seq_along(tissues)){
+    tiss.genes <- tra.class$ensembl.gene[tra.class$Tissue == tissues[q]]
+    tiss.detect <- cell.detect[names(cell.detect) %in% tiss.genes]
+    res.names <- names(cell.res)
+    cell.res <- c(cell.res, length(tiss.detect))
+    names(cell.res) <- c(res.names, tissues[q])
+  }
+  
+  genes.list.down[[cell.ids[i]]] <- cell.res
+}
+
+tra.down.df <- as.data.frame(t(rbind.data.frame(genes.list.down)))
+tra.down.df$Sample <- cell.ids
+
+tra.down.merge <- merge(tra.down.df, thymus.meta[, c("Sample", "PC1", "PC2", "Dim1", "Dim2", "SumFactor", "AgeInt", 
+                                           "AgeFactor", "TFIDF.Cluster", "Aire", "SortDay", "CellType")],
+                   by='Sample')
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+tissue.cast <- t(tra.down.df[, -ncol(tra.down.df)])
+tissue.cast.meta  <- tra.down.merge[, c("Sample", "TFIDF.Cluster", "AgeInt", "SortDay", "SumFactor")]
+rownames(tissue.cast.meta) <- tissue.cast.meta$Sample
+```
+
+### Mature mTEC (cluster 7) pGE changes
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.25, fig.width=4.95}
+maturemTEChi.counts <- tissue.cast[, tissue.cast.meta$Sample[tissue.cast.meta$TFIDF.Cluster%in% c(7)]]
+maturemTEChi.meta <- tissue.cast.meta[tissue.cast.meta$TFIDF.Cluster %in% c(7), ]
+
+# maturemTEChi.counts <- tissue.cast
+# maturemTEChi.meta <- tissue.cast.meta
+
+maturemTEChi.dge <- DGEList(maturemTEChi.counts)
+
+# filter low abundance clusters?
+maturemTEChi.meta$AgeInt <- maturemTEChi.meta$AgeInt
+
+maturemTEChi.design <- model.matrix(~ 1 + AgeInt, maturemTEChi.meta)
+maturemTEChi.dge <- estimateDisp(maturemTEChi.dge, maturemTEChi.design, prior.df=0)
+
+maturemTEChi.fit <- glmFit(maturemTEChi.dge, maturemTEChi.design, robust=TRUE)
+maturemTEChi.res <- as.data.frame(topTags(glmLRT(maturemTEChi.fit, coef=2), n=Inf))
+maturemTEChi.res$Sig <- as.factor(as.numeric(maturemTEChi.res$FDR <= 0.01))
+maturemTEChi.res$GeneGroup <- rownames(maturemTEChi.res)
+
+# use the TFIDF.Cluster column for each cluster
+maturemTEChi.res$Label <- maturemTEChi.res$GeneGroup
+maturemTEChi.res$Label[maturemTEChi.res$Sig == 0] <- ""
+# just highlight the top 10 tissues
+top5.tissue <- maturemTEChi.res[order(abs(maturemTEChi.res$FDR), decreasing=FALSE), ]$Label[1:10]
+#bottom5.tissue <- maturemTEChi.res[order(maturemTEChi.res$logFC, decreasing=FALSE), ]$Label[1:5]
+maturemTEChi.res$Label[!maturemTEChi.res$GeneGroup %in% unique(c(top5.tissue))] <- ""
+
+sig.cols <- c("black", "firebrick1")
+names(sig.cols) <- c(0, 1)
+
+maturemTEChi.res$Label <- gsub(maturemTEChi.res$Label, pattern="_", replacement=" ")
+maturemTEChi.res$Label <- gsub(maturemTEChi.res$Label, pattern="\\.", replacement=" ")
+
+
+# volcano plots are probably better here
+maturemTEChi.volcano <- ggplot(maturemTEChi.res, aes(x=logFC, y=-log10(FDR), fill=Sig)) +
+  geom_vline(mapping=aes(xintercept=0), linetype='dashed', colour='grey') +
+  geom_point(shape=21, size=3) +
+  scale_x_continuous(limits=c(-0.02, 0.02), oob=squish) +
+  scale_fill_manual(values=sig.cols) +
+  theme_mike() +
+  guides(fill=FALSE) +
+  theme(axis.text=element_text(size=11)) +
+  labs(x=expression(bold(paste(Delta, " change in #TRAs detected (per week)"))),
+       y=expression(bold(paste("-log"[10], " FDR")))) +
+  geom_label_repel(aes(label=Label),
+                   colour='black',
+                   fill='white',
+                   nudge_y=-0.1,
+                   size=3)
+
+ggsave(maturemTEChi.volcano,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure4/Mature_mTEC-GeneAbundance-volcano.png",
+       height=4.25, width=4.95, dpi=300)
+
+maturemTEChi.volcano
+```
+
+We want to see how some of these changes occur over age, i.e. are they continuous, or is there a sudden change between 2 ages?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+mtecMat.exprs <- as.data.frame(tissue.cast[, tissue.cast.meta$Sample[tissue.cast.meta$TFIDF.Cluster %in% c(7)]])
+mtecMat.exprs$Tissue <- rownames(mtecMat.exprs)
+mtecMat.melt <- melt(mtecMat.exprs, id.vars=c("Tissue"))
+colnames(mtecMat.melt) <- c("Tissue", "Sample", "Count")
+mtecMat.merge <- merge(mtecMat.melt, thymus.meta[, c("Sample", "AgeFactor", "AgeInt", "TFIDF.Cluster", "SortDay", "CellType")], by='Sample')
+
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=7.75, fig.width=7.5}
+# pick the top 20 tissues
+mtecMat.plot <- mtecMat.merge[mtecMat.merge$Tissue %in% c("Aire.Depend", "Aire.Enhance", "Pancreas", "Eye"), ]
+mtecMat.plot$Tissue <- factor(mtecMat.plot$Tissue,
+                              levels=c("Aire.Enhance", "Aire.Depend", "Eye", "Pancreas"),
+                              labels=c("Aire.Enhance", "Aire.Depend", "Eye", "Pancreas"))
+
+mtecMat.p <- ggplot(mtecMat.plot, 
+                    aes(x=AgeFactor, y=Count, fill=Tissue)) +
+  #geom_smooth() +
+  #geom_point(shape=21, size=3) +
+  geom_boxplot() +
+  theme_mike() +
+  #scale_y_log10() +
+  guides(colour=FALSE, fill=FALSE) +
+  scale_fill_Publication() +
+  labs(x="Age (weeks)", y="Number of genes expressed") +
+  facet_wrap(~Tissue, scales="free_y", ncol=2) +
+  theme(strip.background=element_rect(fill='white'),
+        axis.text=element_text(size=16),
+        axis.title=element_text(size=16),
+        strip.text=element_text(size=18)) +
+  scale_x_discrete(labels=c(1, 4, 16, 32, 52)) +
+  NULL 
+
+ggsave(mtecMat.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure4/mTEC-pGE_categories-top6_smooth.png",
+       height=7.75, width=7.50, dpi=300)
+
+mtecMat.p
+```
+
+### Post-Aire mTEC (cluster 1) pGE changes
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.75, fig.width=4.25}
+postAiremTEC.counts <- tissue.cast[, tissue.cast.meta$Sample[tissue.cast.meta$TFIDF.Cluster %in% c(1)]]
+postAiremTEC.meta <- tissue.cast.meta[tissue.cast.meta$TFIDF.Cluster %in% c(1), ]
+
+# postAiremTEC.counts <- tissue.cast
+# postAiremTEC.meta <- tissue.cast.meta
+
+postAiremTEC.dge <- DGEList(postAiremTEC.counts)
+
+# filter low abundance clusters?
+postAiremTEC.meta$AgeInt <- ordered(postAiremTEC.meta$AgeInt)
+
+postAiremTEC.design <- model.matrix(~ 1 + AgeInt, postAiremTEC.meta)
+postAiremTEC.dge <- estimateDisp(postAiremTEC.dge, postAiremTEC.design, prior.df=0)
+
+postAiremTEC.fit <- glmFit(postAiremTEC.dge, postAiremTEC.design, robust=TRUE)
+postAiremTEC.res <- as.data.frame(topTags(glmLRT(postAiremTEC.fit, coef=2), n=Inf))
+postAiremTEC.res$Sig <- as.factor(as.numeric(postAiremTEC.res$FDR <= 0.01))
+postAiremTEC.res$GeneGroup <- rownames(postAiremTEC.res)
+
+# use the TFIDF.Cluster column for each cluster
+postAiremTEC.res$Label <- postAiremTEC.res$GeneGroup
+postAiremTEC.res$Label[postAiremTEC.res$Sig == 0] <- ""
+
+top5.tissue <- postAiremTEC.res[order(abs(postAiremTEC.res$FDR), decreasing=FALSE), ]$Label[1:10]
+#bottom5.tissue <- maturemTEChi.res[order(maturemTEChi.res$logFC, decreasing=FALSE), ]$Label[1:5]
+postAiremTEC.res$Label[!postAiremTEC.res$GeneGroup %in% unique(c(top5.tissue))] <- ""
+
+sig.cols <- c("black", "firebrick1")
+names(sig.cols) <- c(0, 1)
+
+# volcano plots are probably better here
+postAiremTEC.volcano <- ggplot(postAiremTEC.res, aes(x=logFC, y=-log10(FDR), fill=Sig)) +
+  geom_vline(mapping=aes(xintercept=0), linetype='dashed', colour='grey') +
+  geom_point(shape=21, size=3) +
+  scale_x_continuous(limits=c(-3, 3), oob=squish) +
+  guides(fill=FALSE) +
+  scale_fill_manual(values=sig.cols) +
+  theme_mike() +
+  labs(x=expression(paste("log"[2], " Fold Change")),
+       y=expression(paste("-log"[10], " FDR"))) +
+  geom_label_repel(aes(label=Label),
+                   colour='black',
+                   fill='white',
+                   #nudge_y=-0.1,
+                   size=5)
+
+ggsave(postAiremTEC.volcano,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure3/Post_Aire-GeneAbundance-volcano.png",
+       height=6.75, width=4.75, dpi=300)
+
+postAiremTEC.volcano
+```
+
+These volcano plots that show no associations can go in the supplementary figures.
+
+## Comparison of post-Aire and mature mTEC pGE
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.75, fig.width=4.25}
+postaire.counts <- tissue.cast[, tissue.cast.meta$Sample[tissue.cast.meta$TFIDF.Cluster %in% c(1, 7)]]
+postaire.meta <- tissue.cast.meta[tissue.cast.meta$TFIDF.Cluster %in% c(1, 7), ]
+postaire.meta$TestCluster <- "Reference"
+postaire.meta$TestCluster[postaire.meta$TFIDF.Cluster %in% c(1)] <- "Test"
+# postaire.counts <- tissue.cast
+# postaire.meta <- tissue.cast.meta
+
+postaire.dge <- DGEList(postaire.counts)
+
+# filter low abundance clusters?
+postaire.meta$AgeInt <- ordered(postaire.meta$AgeInt)
+
+postaire.design <- model.matrix(~ 1 + TestCluster + AgeInt, postaire.meta)
+postaire.dge <- estimateDisp(postaire.dge, postaire.design, prior.df=0)
+
+postaire.fit <- glmFit(postaire.dge, postaire.design, robust=TRUE)
+postaire.res <- as.data.frame(topTags(glmLRT(postaire.fit, coef=2), n=Inf))
+postaire.res$Sig <- as.factor(as.numeric(postaire.res$FDR <= 0.01))
+postaire.res$GeneGroup <- rownames(postaire.res)
+
+# use the TFIDF.Cluster column for each cluster
+postaire.res$Label <- postaire.res$GeneGroup
+postaire.res$Label[postaire.res$Sig == 0] <- ""
+
+top5.tissue <- postaire.res[order(abs(postaire.res$FDR), decreasing=FALSE), ]$Label[1:10]
+#bottom5.tissue <- maturemTEChi.res[order(maturemTEChi.res$logFC, decreasing=FALSE), ]$Label[1:5]
+postaire.res$Label[!postaire.res$GeneGroup %in% unique(c(top5.tissue))] <- ""
+
+# volcano plots are probably better here
+postaire.volcano <- ggplot(postaire.res, aes(x=logFC, y=-log10(FDR), fill=Sig)) +
+  geom_vline(mapping=aes(xintercept=0), linetype='dashed', colour='grey') +
+  geom_point(shape=21, size=3) +
+  #scale_x_continuous(limits=c(-3, 3), oob=squish) +
+  scale_fill_manual(values=c("black", "firebrick1")) +
+  theme_mike() +
+  guides(fill=FALSE) +
+  labs(x=expression(paste("log"[2], " Fold Change")),
+       y=expression(paste("-log"[10], " FDR"))) +
+  geom_label_repel(aes(label=Label),
+                   colour='black',
+                   fill='white',
+                   #nudge_y=-1,
+                   size=5)
+
+ggsave(postaire.volcano,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure3/PostAire_mTECVsMature_mTEC-GeneAbundance-volcano.png",
+       height=4.25, width=3.75, dpi=300)
+
+postaire.volcano
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(tra.down.merge[tra.down.merge$TFIDF.Cluster %in% c(1, 7), ],
+       aes(x=AgeFactor, y=Aire.Enhance, fill=TFIDF.Cluster)) +
+  geom_boxplot() +
+  theme_mike() +
+  #scale_y_log10() +
+  scale_fill_manual(values=cluster.cols)
+```
+
+There are more Aire-enhanced TRAs in the post-Aire cluster 1.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(tra.down.merge[tra.down.merge$TFIDF.Cluster %in% c(1, 7), ],
+       aes(x=AgeFactor, y=Aire.Depend, fill=TFIDF.Cluster)) +
+  geom_boxplot() +
+  theme_mike() +
+  #scale_y_log10() +
+  scale_fill_manual(values=cluster.cols)
+```
+
+These boxplots and the above volcano plot can go in the supplementary figures as confirmation of the difference between mature and post-Aire mTEC.  For the main figures 
+I want to use the mTEC maturation gradient.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# define a gradient through the mTECs
+set.seed(42)
+mtec.exprs <- thymus.norm.tra[, thymus.meta$Sample[thymus.meta$TFIDF.Cluster %in% c(1, 7)]]
+mtec.hvg <- find_hvg(mtec.exprs, return.ranks=TRUE, p.threshold=1e-5)
+
+mtec.pca <- pca_wrapper(mtec.exprs[mtec.hvg$gene_id[mtec.hvg$HVG], ], approximate=TRUE, n.dim=30)
+mtec.pcs <- mtec.pca$DF
+mtec.meta.merge <- merge(mtec.pcs, thymus.meta[, c("Sample", "CellType", "TFIDF.Cluster", "Aire", "Cd86", "Interpretation",
+                                                   "SortDay", "AgeFactor", "SumFactor", "AgeInt")], by='Sample')
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+set.seed(42)
+mtec.dm <- DiffusionMap(t(mtec.exprs[mtec.hvg$gene_id[mtec.hvg$HVG], ]),
+                           n_eigs=10, k=20, distance='euclidean')
+plot(mtec.dm)
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# define the smallest DC1 cell as the tip
+mtec.dpt <- DPT(mtec.dm, tips=c(which(mtec.dm$DC1 == min(mtec.dm$DC1)), #which(mtec.dm$DC1 == mean(mtec.dm$DC1)), 
+                                which(mtec.dm$DC1 == max(mtec.dm$DC1))))
+
+mtec.diffusion <- do.call(cbind.data.frame,
+                        list("DC1"=mtec.dpt$DC1, "DC2"=mtec.dpt$DC2, "DC3"=mtec.dpt$DC3,
+                             "DC4"=mtec.dpt$DC4, "DC5"=mtec.dpt$DC4, "DC6"=mtec.dpt$DC4,
+                             "DC7"=mtec.dpt$DC4, "DC8"=mtec.dpt$DC4, "DC9"=mtec.dpt$DC4,
+                             "DC10"=mtec.dpt$DC4, "DPT1"=mtec.dpt$DPT1, "DPT2"=mtec.dpt$DPT2,
+                             "DPT3"=mtec.dpt$DPT3, "Branch"=mtec.dpt$Branch))
+rownames(mtec.diffusion) <- colnames(mtec.exprs)
+mtec.diffusion$Sample <- colnames(mtec.exprs)
+
+mtec.diffusion.merge <- merge(mtec.diffusion, mtec.meta.merge, by='Sample')
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=2.75, fig.width=5.5}
+mtec.dc.plot <- ggplot(mtec.diffusion.merge, aes(x=DC1, y=DC2)) +
+  geom_point(data=mtec.diffusion.merge[, c("DC1", "DC2")], aes(x=DC1, y=DC2),
+             size=1, colour='grey80') +
+  geom_point(shape=21, size=2, aes(fill=Aire)) +
+  theme_mike() +
+  facet_wrap(~Interpretation) +
+  guides(fill=guide_colourbar(direction="vertical", barwidth=0.5, barheight=2, ticks=FALSE)) +
+  theme(strip.background=element_rect(fill='white', colour='white'),
+        strip.text=element_text(size=18),
+        legend.position="right",
+        legend.text=element_text(size=18),
+        legend.title=element_text(size=18),
+        axis.title=element_text(size=18),
+        panel.grid=element_blank(),
+        #axis.text=element_text(size=9),
+        axis.ticks=element_blank(),
+        axis.text=element_blank()) +
+  scale_fill_distiller(palette="Oranges", direction=1, breaks=FALSE) +
+  labs(x="DC1", y="DC2") +
+  NULL
+
+ggsave(mtec.dc.plot,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure4/medulla_DiffusionMap-by_Aire-scatter.png",
+       height=2.75, width=5.5, dpi=300)
+
+mtec.dc.plot
+```
+
+This is essentially a linear trajectory.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=2.75, fig.width=5.5}
+mtec.dpt.plot <- ggplot(mtec.diffusion.merge, aes(x=DC1, y=DC2)) +
+  geom_point(data=mtec.diffusion.merge[, c("DC1", "DC2")], aes(x=DC1, y=DC2),
+             size=1, colour='grey80') +
+  geom_point(shape=21, size=2, aes(fill=DPT2)) +
+  theme_mike() +
+  facet_wrap(~Interpretation) +
+  guides(fill=guide_colourbar(title="DPT", direction="vertical", barwidth=0.5, 
+                              label=FALSE,
+                              breaks=c(),
+                              barheight=2, ticks=FALSE)) +
+  theme(strip.background=element_rect(fill='white', colour='white'),
+        strip.text=element_text(size=18),
+        legend.position="right",
+        legend.text=element_text(size=18),
+        legend.title=element_text(size=18),
+        axis.title=element_text(size=18),
+        panel.grid=element_blank(),
+        #axis.text=element_text(size=9),
+        axis.ticks=element_blank(),
+        axis.text=element_blank()) +
+  scale_fill_viridis(direction=-1, breaks=FALSE) +
+  labs(x="DC 1", y="DC 2") +
+  NULL
+
+ggsave(mtec.dpt.plot,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure4/medulla_DiffusionMap-by_DPT-scatter.png",
+       height=2.75, width=5.5, dpi=300)
+
+mtec.dpt.plot
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=8.25, fig.width=6.75}
+# merge with the PCA information
+mtecMat.counts <- tissue.cast[, tissue.cast.meta$Sample[tissue.cast.meta$TFIDF.Cluster %in% c(1, 7)]]
+mtecMat.meta <- tissue.cast.meta[tissue.cast.meta$TFIDF.Cluster %in% c(1, 7), ]
+mtecMat.meta <- merge(mtecMat.meta, mtec.pcs, by='Sample')
+
+#mtecMat.meta$TestCluster <- "Reference"
+#mtecMat.meta$TestCluster[mtecMat.meta$TFIDF.Cluster %in% c(1)] <- "Test"
+# mtecMat.counts <- tissue.cast
+# mtecMat.meta <- tissue.cast.meta
+
+mtecMat.dge <- DGEList(mtecMat.counts, lib.size=colSums(mtecMat.counts))
+
+# filter low abundance clusters?
+mtecMat.meta$AgeInt <- ordered(mtecMat.meta$AgeInt)
+
+mtecMat.design <- model.matrix(~ 1 + PC1 + AgeInt, mtecMat.meta)
+mtecMat.dge <- estimateDisp(mtecMat.dge, mtecMat.design, prior.df=0)
+
+mtecMat.fit <- glmFit(mtecMat.dge, mtecMat.design, robust=TRUE)
+mtecMat.res <- as.data.frame(topTags(glmLRT(mtecMat.fit, coef=2), n=Inf))
+mtecMat.res$Sig <- as.factor(as.numeric(mtecMat.res$FDR <= 0.01))
+mtecMat.res$GeneGroup <- rownames(mtecMat.res)
+
+# use the TFIDF.Cluster column for each cluster
+mtecMat.res$Label <- mtecMat.res$GeneGroup
+mtecMat.res$Label[mtecMat.res$Sig == 0] <- ""
+top5.tissue <- mtecMat.res[order(abs(mtecMat.res$FDR), decreasing=FALSE), ]$Label[1:8]
+mtecMat.res$Label[!mtecMat.res$GeneGroup %in% unique(c(top5.tissue))] <- ""
+
+# volcano plots are probably better here
+mtecMat.volcano <- ggplot(mtecMat.res, aes(x=logFC, y=-log10(FDR), fill=Sig)) +
+  geom_vline(mapping=aes(xintercept=0), linetype='dashed', colour='grey') +
+  geom_point(shape=21, size=3) +
+  #scale_x_continuous(limits=c(-3, 3), oob=squish) +
+  scale_fill_manual(values=c("black", "firebrick1")) +
+  theme_mike() +
+  labs(x=expression(paste(beta*" coefficient")),
+       y=expression(paste("-log"[10], " FDR"))) +
+  guides(fill=FALSE) +
+  scale_x_continuous(limits=c(-0.04, 0.04)) +
+  geom_label_repel(aes(label=Label),
+                   colour='black',
+                   fill='white',
+                   nudge_y=1,
+                   size=6) +
+  geom_segment(aes(x=x1, y=y1, xend=x2, yend=y2), colour='grey30',
+               size=2.5,
+               data=data.frame(x1=-0.02, x2=0.02, y1=90, y2=90, Sig='0'),
+               arrow=arrow(length=unit(0.03, "npc"))) +
+  annotate("text", x=-0.02, y=95, label="Mature mTEC", size=6) +
+  annotate("text", x=0.02, y=95, label="Post-Aire mTEC", size=6) +
+  theme(text=element_text(size=22)) +
+  NULL
+
+ggsave(mtecMat.volcano,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure4/mTEC-maturation_PC-volcano.png",
+       height=8.25, width=6.75, dpi=300)
+
+mtecMat.volcano
+```
+
+The mature mTEC numbers don't change, but the numbers of TRAs do.  The number of TRAs expressed by post-Aire mTECs doesn't change, but their total abundance does. 
+Is there any kind of shift with age as mTEC mature?  I've tested for differences in terms of pGE, but what about good old fashion gene expression changes?  We know 
+that there is an increase in some inflammation-related genes in the mature mTECs, but we don't know if this is in any way linked to maturation and post-Aire mTECs.
+
+Is there any interaction between age and maturation?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.75, fig.width=4.25}
+# merge with the PCA information
+int.mtecMat.dge <- DGEList(mtecMat.counts)
+
+# filter low abundance clusters?
+mtecMat.meta$AgeInt <- ordered(mtecMat.meta$AgeInt)
+
+int.mtecMat.design <- model.matrix(~ 1 + PC1 * AgeInt, mtecMat.meta)
+int.mtecMat.dge <- estimateDisp(int.mtecMat.dge, int.mtecMat.design, prior.df=0)
+
+int.mtecMat.fit <- glmFit(int.mtecMat.dge, int.mtecMat.design, robust=TRUE)
+int.mtecMat.res <- as.data.frame(topTags(glmLRT(int.mtecMat.fit, coef=7), n=Inf))
+int.mtecMat.res$Sig <- as.factor(as.numeric(int.mtecMat.res$FDR <= 0.01))
+int.mtecMat.res$GeneGroup <- rownames(int.mtecMat.res)
+
+# use the TFIDF.Cluster column for each cluster
+int.mtecMat.res$Label <- int.mtecMat.res$GeneGroup
+int.mtecMat.res$Label[int.mtecMat.res$Sig == 0] <- ""
+top5.tissue <- int.mtecMat.res[order(abs(int.mtecMat.res$FDR), decreasing=FALSE), ]$Label[1:10]
+int.mtecMat.res$Label[!int.mtecMat.res$GeneGroup %in% unique(c(top5.tissue))] <- ""
+
+# volcano plots are probably better here
+int.mtecMat.volcano <- ggplot(int.mtecMat.res, aes(x=logFC, y=-log10(FDR), fill=Sig)) +
+  geom_vline(mapping=aes(xintercept=0), linetype='dashed', colour='grey') +
+  geom_point(shape=21, size=3) +
+  #scale_x_continuous(limits=c(-3, 3), oob=squish) +
+  scale_fill_manual(values=c("black", "firebrick1")) +
+  theme_mike() +
+  labs(x=expression(paste(beta*" coefficient")),
+       y=expression(paste("-log"[10], " FDR"))) +
+  guides(fill=FALSE) +
+  scale_x_continuous(limits=c(-0.04, 0.04)) +
+  geom_label_repel(aes(label=Label),
+                   colour='black',
+                   fill='white',
+                   #nudge_y=-1,
+                   size=3) +
+  geom_segment(aes(x=x1, y=y1, xend=x2, yend=y2), colour='grey30',
+               size=1.5,
+               data=data.frame(x1=-0.02, x2=0.02, y1=2.5, y2=2.5, Sig='0'),
+               arrow=arrow(length=unit(0.03, "npc"))) +
+  annotate("text", x=-0.02, y=2, label="Mature mTEC") +
+  annotate("text", x=0.02, y=2, label="Post-Aire mTEC") +
+  NULL
+
+ggsave(int.mtecMat.volcano,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure3/mTEC-maturation_PC-ageInteraction-volcano.png",
+       height=4.25, width=3.75, dpi=300)
+
+int.mtecMat.volcano
+```
+
+No interaction between age and maturation. We need some visualisations to see if there are more TRAs in post-Aire mTECs or mature mTECs.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.45, fig.width=6.95}
+detect.plot <- ggplot(tra.down.merge[tra.down.merge$TFIDF.Cluster %in% c(1, 2, 6, 7), ], 
+       aes(x=AgeFactor, y=TRA.Detect, fill=TFIDF.Cluster)) +
+  geom_boxplot() +
+  labs(x="Age (weeks)", y="# TRAs detected") +
+  guides(fill=guide_legend(title="Cluster")) +
+  scale_fill_manual(values=cluster.cols) +
+  theme_mike()
+
+ggsave(detect.plot,
+       filename="~/Dropbox/AgeingExperiment/Paper/Supplementary_figures/mTEC_Clusters_TRA-boxplot.png",
+       height=3.45, width=6.95, dpi=300)
+
+detect.plot
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.45, fig.width=6.95}
+depend.plot <- ggplot(tra.down.merge[tra.down.merge$TFIDF.Cluster %in% c(1, 2, 6, 7), ], 
+       aes(x=AgeFactor, y=Aire.Depend, fill=TFIDF.Cluster)) +
+  geom_boxplot() +
+  labs(x="Age (weeks)", y="# Aire-Dependent TRAs") +
+  guides(fill=guide_legend(title="Cluster")) +
+  scale_fill_manual(values=cluster.cols) +
+  theme_mike()
+
+ggsave(depend.plot,
+       filename="~/Dropbox/AgeingExperiment/Paper/Supplementary_figures/mTEC_Clusters_Aire_depend-boxplot.png",
+       height=3.45, width=6.95, dpi=300)
+
+depend.plot
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.45, fig.width=6.95}
+enhance.plot <- ggplot(tra.down.merge[tra.down.merge$TFIDF.Cluster %in% c(1, 2, 6, 7), ], 
+       aes(x=AgeFactor, y=Aire.Enhance, fill=TFIDF.Cluster)) +
+  geom_boxplot() +
+  labs(x="Age (weeks)", y="# Aire-Enhanced TRAs") +
+  guides(fill=guide_legend(title="Cluster")) +
+  scale_fill_manual(values=cluster.cols) +
+  theme_mike()
+
+ggsave(enhance.plot,
+       filename="~/Dropbox/AgeingExperiment/Paper/Supplementary_figures/mTEC_Clusters_Aire_enhance-boxplot.png",
+       height=3.45, width=6.95, dpi=300)
+
+enhance.plot
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.45, fig.width=6.95}
+thymic.plot <- ggplot(tra.down.merge[tra.down.merge$TFIDF.Cluster %in% c(1, 2, 6, 7), ], 
+       aes(x=AgeFactor, y=Thymus, fill=TFIDF.Cluster)) +
+  geom_boxplot() +
+  labs(x="Age (weeks)", y="# Thymic TRAs") +
+  guides(fill=guide_legend(title="Cluster")) +
+  scale_fill_manual(values=cluster.cols) +
+  theme_mike()
+
+ggsave(thymic.plot,
+       filename="~/Dropbox/AgeingExperiment/Paper/Supplementary_figures/mTEC_Clusters_thymic_TRAs-boxplot.png",
+       height=3.45, width=6.95, dpi=300)
+
+thymic.plot
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.45, fig.width=6.95}
+house.plot <- ggplot(tra.down.merge[tra.down.merge$TFIDF.Cluster %in% c(1, 2, 6, 7), ], 
+       aes(x=AgeFactor, y=housekeeping, fill=TFIDF.Cluster)) +
+  geom_boxplot() +
+  labs(x="Age (weeks)", y="# Housekeeping genes") +
+  guides(fill=guide_legend(title="Cluster")) +
+  scale_fill_manual(values=cluster.cols) +
+  theme_mike()
+
+ggsave(house.plot,
+       filename="~/Dropbox/AgeingExperiment/Paper/Supplementary_figures/mTEC_Clusters_housekeeping-boxplot.png",
+       height=3.45, width=6.95, dpi=300)
+
+house.plot
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.45, fig.width=6.95}
+tongue.plot <- ggplot(tra.down.merge[tra.down.merge$TFIDF.Cluster %in% c(1, 2, 6, 7), ], 
+       aes(x=AgeFactor, y=Tongue, fill=TFIDF.Cluster)) +
+  geom_boxplot() +
+  labs(x="Age (weeks)", y="# Tongue TRAs") +
+  guides(fill=guide_legend(title="Cluster")) +
+  scale_fill_manual(values=cluster.cols) +
+  theme_mike()
+
+ggsave(tongue.plot,
+       filename="~/Dropbox/AgeingExperiment/Paper/Supplementary_figures/mTEC_Clusters_tongue-boxplot.png",
+       height=3.45, width=6.95, dpi=300)
+
+tongue.plot
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.45, fig.width=6.95}
+pancreas.plot <- ggplot(tra.down.merge[tra.down.merge$TFIDF.Cluster %in% c(1, 2, 6, 7), ], 
+       aes(x=AgeFactor, y=Pancreas, fill=TFIDF.Cluster)) +
+  geom_boxplot() +
+  labs(x="Age (weeks)", y="# Pancreas TRAs") +
+  guides(fill=guide_legend(title="Cluster")) +
+  scale_fill_manual(values=cluster.cols) +
+  theme_mike()
+
+ggsave(pancreas.plot,
+       filename="~/Dropbox/AgeingExperiment/Paper/Supplementary_figures/mTEC_Clusters_pancreas-boxplot.png",
+       height=3.45, width=6.95, dpi=300)
+
+pancreas.plot
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.45, fig.width=6.95}
+macrophage.plot <- ggplot(tra.down.merge[tra.down.merge$TFIDF.Cluster %in% c(1, 2, 6, 7), ], 
+       aes(x=AgeFactor, y=Macrophage, fill=TFIDF.Cluster)) +
+  geom_boxplot() +
+  labs(x="Age (weeks)", y="# Macrophage TRAs") +
+  guides(fill=guide_legend(title="Cluster")) +
+  scale_fill_manual(values=cluster.cols) +
+  theme_mike()
+
+ggsave(macrophage.plot,
+       filename="~/Dropbox/AgeingExperiment/Paper/Supplementary_figures/mTEC_Clusters_macrophage-boxplot.png",
+       height=3.45, width=6.95, dpi=300)
+
+macrophage.plot
+```
+
+
+
+
+
+#### Age-changes in mTEC maturation
+
+I'll test the genes that change along the maturation gradient, and the interaction between age and this gradient.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+mtec.expression <- thymus.norm[, colnames(thymus.norm) %in% mtecMat.meta$Sample]
+
+rownames(mtec.diffusion.merge) <- mtec.diffusion.merge$Sample
+mtec.diffusion.merge  <- mtec.diffusion.merge[colnames(mtec.expression), ]
+
+design.mtec <- model.matrix(~ 1 + DPT2*AgeFactor, data=mtec.diffusion.merge)
+
+# fit a linear model
+fit.mtec <- lmFit(mtec.expression, design.mtec)
+fit.mtec <- eBayes(fit.mtec)
+sum.res.mtec <- summary(decideTests(fit.mtec))
+
+de.res.mtec <- topTable(fit.mtec, coef=7, n=Inf, sort="p", p=1.0)
+de.res.mtec$Sig <- 0
+de.res.mtec$Sig[de.res.mtec$adj.P.Val <= 0.01] <- 1
+de.res.mtec$Sig <- as.factor(de.res.mtec$Sig)
+
+de.res.mtec$Diff <- 0
+de.res.mtec$Diff[de.res.mtec$logFC < 0 & de.res.mtec$Sig == 1] <- -1
+de.res.mtec$Diff[de.res.mtec$logFC > 0 & de.res.mtec$Sig == 1] <- 1
+
+de.res.mtec$gene_id <- rownames(de.res.mtec)
+de.merge.mtec <- merge(de.res.mtec, gene_symbol,
+                       by.x='gene_id', by.y='ensembl_gene_id', all.x=TRUE)
+gene.top.mtec <- de.merge.mtec$external_gene_name
+
+# plot the top 6 and bottom 6 gene symbols
+de.merge.mtec$Label <- de.merge.mtec$external_gene_name
+top6 <- de.merge.mtec$external_gene_name[order(de.merge.mtec$logFC, decreasing=TRUE)][1:6]
+bottom6 <- de.merge.mtec$external_gene_name[order(de.merge.mtec$logFC, decreasing=FALSE)][1:6]
+de.merge.mtec$Label[!de.merge.mtec$Label %in% c(top6, bottom6)] <- ""
+de.merge.mtec$Label[de.merge.mtec$Sig == 0] <- ""
+
+table(de.merge.mtec$Diff)
+```
+
+There is almost no interaction between linear age and this maturation gradient.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+mtec.time.ma <- ggplot(de.merge.mtec, aes(x=AveExpr, y=logFC, fill=Sig)) +
+  geom_point(size=2, shape=21) + theme_mike() +
+  scale_fill_manual(values=c("black", "firebrick1")) +
+  labs(x=expression(paste("Mean log"[2], " Expression")),
+       y=expression(paste("log"[2], " Fold Change"))) +
+  guides('colour'=FALSE, fill=FALSE) +
+  #ylim(c(-3, 3)) +
+  geom_label_repel(aes(label=Label),
+                  colour='black',
+                  fill='white',
+                  nudge_x=0.01,
+                  nudge_y=0.01,
+                  size=3)
+
+ggsave(mtec.time.ma,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure3/MAplot-Mature_mTEC-by_DPT.png",
+       height=4.25, width=6.75, dpi=300)
+
+mtec.time.ma
+```
+
+Any interaction with a quadratic term?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+quad.de.res.mtec <- topTable(fit.mtec, coef=8, n=Inf, sort="p", p=1.0)
+quad.de.res.mtec$Sig <- 0
+quad.de.res.mtec$Sig[quad.de.res.mtec$adj.P.Val <= 0.01] <- 1
+quad.de.res.mtec$Sig <- as.factor(quad.de.res.mtec$Sig)
+
+quad.de.res.mtec$Diff <- 0
+quad.de.res.mtec$Diff[quad.de.res.mtec$logFC < 0 & quad.de.res.mtec$Sig == 1] <- -1
+quad.de.res.mtec$Diff[quad.de.res.mtec$logFC > 0 & quad.de.res.mtec$Sig == 1] <- 1
+
+quad.de.res.mtec$gene_id <- rownames(quad.de.res.mtec)
+quad.de.merge.mtec <- merge(quad.de.res.mtec, gene_symbol,
+                       by.x='gene_id', by.y='ensembl_gene_id', all.x=TRUE)
+gene.top.mtec <- quad.de.merge.mtec$external_gene_name
+
+# plot the top 6 and bottom 6 gene symbols
+quad.de.merge.mtec$Label <- quad.de.merge.mtec$external_gene_name
+top6 <- quad.de.merge.mtec$external_gene_name[order(quad.de.merge.mtec$logFC, decreasing=TRUE)][1:10]
+bottom6 <- quad.de.merge.mtec$external_gene_name[order(quad.de.merge.mtec$logFC, decreasing=FALSE)][1:10]
+quad.de.merge.mtec$Label[!quad.de.merge.mtec$Label %in% c(top6, bottom6)] <- ""
+quad.de.merge.mtec$Label[quad.de.merge.mtec$Sig == 0] <- ""
+
+table(quad.de.merge.mtec$Diff)
+```
+
+There are a few more interactions between quadratic age and this maturation gradient.  I wonder if that's a reflection of the post-Aire mTECs.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+quad.mtec.time.ma <- ggplot(quad.de.merge.mtec, aes(x=AveExpr, y=logFC, fill=Sig)) +
+  geom_point(size=2, shape=21) + theme_mike() +
+  scale_fill_manual(values=c("black", "firebrick1")) +
+  labs(x=expression(paste("Mean log"[2], " Expression")),
+       y=expression(paste("log"[2], " Fold Change"))) +
+  guides('colour'=FALSE, fill=FALSE) +
+  #ylim(c(-3, 3)) +
+  geom_label_repel(aes(label=Label),
+                  colour='black',
+                  fill='white',
+                  nudge_x=0.01,
+                  nudge_y=0.01,
+                  size=3)
+
+ggsave(quad.mtec.time.ma,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure3/MAplot_quad-Mature_mTEC-by_DPT.png",
+       height=4.25, width=6.75, dpi=300)
+
+quad.mtec.time.ma
+```
+
+Hmmm, that looks a little bit suspect, like it's driven by global differences in RNA/cell size.  Wrap up the medulla with age-dependent changes in gene expression 
+in the medulla clusters.
+
+## Cluster 7 TECs
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+cluster7.meta <- thymus.meta[thymus.meta$TFIDF.Cluster == "7", ]
+cluster7.expression <- thymus.norm[, colnames(thymus.norm) %in% cluster7.meta$Sample]
+rownames(cluster7.meta) <- cluster7.meta$Sample
+cluster7.meta  <- cluster7.meta[colnames(cluster7.expression), ]
+
+design.cluster7 <- model.matrix(~ AgeFactor + SumFactor, data=cluster7.meta)
+
+# fit a linear model
+fit.cluster7 <- lmFit(cluster7.expression, design.cluster7)
+fit.cluster7 <- eBayes(fit.cluster7)
+sum.res.cluster7 <- summary(decideTests(fit.cluster7))
+
+de.res.cluster7 <- topTable(fit.cluster7, coef=2, n=Inf, sort="p", p=1.0)
+de.res.cluster7$Sig <- 0
+de.res.cluster7$Sig[de.res.cluster7$adj.P.Val <= 0.01] <- 1
+de.res.cluster7$Sig <- as.factor(de.res.cluster7$Sig)
+
+de.res.cluster7$Diff <- 0
+de.res.cluster7$Diff[de.res.cluster7$logFC < 0 & de.res.cluster7$Sig == 1] <- -1
+de.res.cluster7$Diff[de.res.cluster7$logFC > 0 & de.res.cluster7$Sig == 1] <- 1
+
+de.res.cluster7$gene_id <- rownames(de.res.cluster7)
+de.merge.cluster7 <- merge(de.res.cluster7, gene_symbol,
+                       by.x='gene_id', by.y='ensembl_gene_id', all.x=TRUE)
+gene.top.cluster7 <- de.merge.cluster7$external_gene_name
+
+# plot the top 6 and bottom 6 gene symbols
+de.merge.cluster7$Label <- de.merge.cluster7$external_gene_name
+top6 <- de.merge.cluster7$external_gene_name[order(de.merge.cluster7$logFC, decreasing=TRUE)][1:6]
+bottom6 <- de.merge.cluster7$external_gene_name[order(de.merge.cluster7$logFC, decreasing=FALSE)][1:6]
+de.merge.cluster7$Label[!de.merge.cluster7$Label %in% c(top6, bottom6)] <- ""
+de.merge.cluster7$Label[de.merge.cluster7$Sig == 0] <- ""
+
+write.table(de.merge.cluster7,
+            file="~/Dropbox/AgeingExperiment/Analysis/Age_dependent_analysis/Cluster7-DEgenes-by_ageInt.tsv",
+            sep="\t", quote=F)
+
+table(de.merge.cluster7$Diff)
+```
+
+There are quite a few age-dependent changes in gene expression in the mature mTECs.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+clust7.time.ma <- ggplot(de.merge.cluster7, aes(x=AveExpr, y=logFC, fill=Sig)) +
+  geom_point(size=2, shape=21) + theme_mike() +
+  scale_fill_manual(values=c("black", "firebrick1")) +
+  labs(x=expression(paste("Mean log"[2], " Expression")),
+       y=expression(paste("log"[2], " Fold Change"))) +
+  guides('colour'=FALSE, fill=FALSE) +
+  ylim(c(-3, 3)) +
+  geom_label_repel(aes(label=Label),
+                  colour='black',
+                  fill='white',
+                  nudge_x=0.01,
+                  nudge_y=0.01,
+                  size=3)
+
+ggsave(clust7.time.ma,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure3/MAplot-Mature_mTEC-by_ageInt.png",
+       height=4.25, width=6.75, dpi=300)
+
+clust7.time.ma
+```
+
+### Cluster 7 functional enrichment testing
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# use goseq
+# use GO enrichment to test for specific pathways and function
+# if there are enriched terms, this would at least imply some
+# similar functional connection
+gene.tpm <- read.table("~/Dropbox/Thymus/mTEC_1_01.quant", sep="\t",
+                       h=T, stringsAsFactors=F)
+
+gene.length <- gene.tpm$Length[unique(gene.tpm$Name) %in% all.genes]
+names(gene.length) <- intersect(unique(gene.tpm$Name), all.genes)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# use goseq
+# use GO enrichment to test for specific pathways and function
+# if there are enriched terms, this would at least imply some
+# similar functional connection
+cluster7.genes <- de.merge.cluster7$gene_id[de.merge.cluster7$Sig == 1]
+```
+
+
+### Up-regulated genes
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.75, fig.width=5.75}
+cluster7.up <- de.merge.cluster7$gene_id[de.merge.cluster7$Diff == 1]
+cluster7.down <- de.merge.cluster7$gene_id[de.merge.cluster7$Diff == -1]
+
+de.big.vector <- as.integer(unique(all.genes) %in% unique(cluster7.up))
+names(de.big.vector) <- unique(all.genes)
+
+de.big.vector <- de.big.vector[intersect(names(de.big.vector), names(gene.length))]
+
+pwf.all <- nullp(de.big.vector, "mm10", "ensGene",
+                 bias.data=gene.length[intersect(names(de.big.vector), names(gene.length))],
+                 plot.fit=FALSE)
+cluster7_up.GO.wall.all <- goseq(pwf.all, genome="mm10", id="ensGene", gene2cat=hallmark.go,
+                           method="Wallenius", use_genes_without_cat=T)
+  
+# part1.GO.wall.all <- goseq(pwf.all, genome="mm10", id="ensGene", test.cats=c("GO:BP"),
+#                            method="Wallenius", use_genes_without_cat=T)
+
+cluster7_up.GO.wall.all$padjust <- p.adjust(cluster7_up.GO.wall.all$over_represented_pvalue, method="BH")
+cluster7_up.GO.wall.all$foldEnrich <- ((cluster7_up.GO.wall.all$numDEInCat/length(unique(cluster7.up)))/(cluster7_up.GO.wall.all$numInCat/length(gene.length)))
+
+# select on p-value and foldEnrich
+
+pretty.terms <- unlist(lapply(strsplit(cluster7_up.GO.wall.all$category, fixed=T, split="_"),
+                              FUN=function(X) str_title_case(gsub(tolower(paste(X[-1], collapse=" ")), perl=TRUE,
+                                                                  pattern="ecm", replacement="ECM"))))
+cluster7_up.GO.wall.all$Term <- pretty.terms
+
+cluster7_up.GO.sig.all <- cluster7_up.GO.wall.all[(cluster7_up.GO.wall.all$padjust <= 1e-3), ]
+cluster7_up.go_cats.all <- data.frame(cluster7_up.GO.sig.all$category, cluster7_up.GO.sig.all$foldEnrich)
+
+cluster7_up.p.enrich <- ggplot(cluster7_up.GO.sig.all,
+                   aes(x=foldEnrich, y=-log10(padjust), colour=-log10(padjust),
+                       size=foldEnrich)) +
+  geom_point() + theme_mike() +
+  scale_colour_gradient(low="#000000", high="#DC143C")
+
+cluster7_up.GO.all <- cluster7_up.GO.sig.all[order(cluster7_up.GO.sig.all$padjust, decreasing=FALSE), ]
+
+write.table(cluster7_up.GO.all,
+            file="~/Dropbox/AgeingExperiment/Analysis/Age_dependent_analysis/Cluster7_upDE-MSigDB_enriched.tsv",
+            sep="\t", quote=FALSE, row.names=FALSE)
+
+cluster7_up.p.terms <- ggplot(na.omit(cluster7_up.GO.all[1:25, ]),
+                  aes(x=reorder(Term, 
+                                foldEnrich),
+           y=foldEnrich,
+           fill=-log10(padjust))) +
+  scale_fill_distiller(palette="Reds", direction=1) +
+  geom_bar(stat='identity') + theme_mike() +
+  scale_x_discrete(labels=function(X) str_wrap(X, width=45)) +
+  coord_flip() + labs(x="Gene Signature", y="Fold Enrichment") +
+  theme(axis.text=element_text(size=11)) +
+  NULL
+
+ggsave(cluster7_up.p.terms,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure3/Mature_mTEC-DEup-MSigDB_enrich.png",
+       height=3.75, width=5.75, dpi=300)
+
+#plot_grid(cluster7_up.p.enrich, cluster7_up.p.terms, ncol=2, rel_widths=c(0.3, 0.7))
+#cluster7_up.p.terms
+```
+
+### Down-regulated genes
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=7.75, fig.width=9.75}
+de.big.vector <- as.integer(unique(all.genes) %in% unique(cluster7.down))
+names(de.big.vector) <- unique(all.genes)
+
+de.big.vector <- de.big.vector[intersect(names(de.big.vector), names(gene.length))]
+
+pwf.all <- nullp(de.big.vector, "mm10", "ensGene",
+                 bias.data=gene.length[intersect(names(de.big.vector), names(gene.length))],
+                 plot.fit=FALSE)
+cluster7_down.GO.wall.all <- goseq(pwf.all, genome="mm10", id="ensGene", gene2cat=hallmark.go,
+                           method="Wallenius", use_genes_without_cat=T)
+  
+# part1.GO.wall.all <- goseq(pwf.all, genome="mm10", id="ensGene", test.cats=c("GO:BP"),
+#                            method="Wallenius", use_genes_without_cat=T)
+
+cluster7_down.GO.wall.all$padjust <- p.adjust(cluster7_down.GO.wall.all$over_represented_pvalue, method="BH")
+cluster7_down.GO.wall.all$foldEnrich <- ((cluster7_down.GO.wall.all$numDEInCat/length(unique(cluster7.down)))/(cluster7_down.GO.wall.all$numInCat/length(gene.length)))
+
+# select on p-value and foldEnrich
+
+pretty.terms <- unlist(lapply(strsplit(cluster7_down.GO.wall.all$category, fixed=T, split="_"),
+                              FUN=function(X) str_title_case(gsub(tolower(paste(X[-1], collapse=" ")), perl=TRUE,
+                                                                  pattern="ecm", replacement="ECM"))))
+cluster7_down.GO.wall.all$Term <- pretty.terms
+
+cluster7_down.GO.sig.all <- cluster7_down.GO.wall.all[(cluster7_down.GO.wall.all$padjust <= 1e-3), ]
+cluster7_down.go_cats.all <- data.frame(cluster7_down.GO.sig.all$category, cluster7_down.GO.sig.all$foldEnrich)
+
+cluster7_down.p.enrich <- ggplot(cluster7_down.GO.sig.all,
+                   aes(x=foldEnrich, y=-log10(padjust), colour=-log10(padjust),
+                       size=foldEnrich)) +
+  geom_point() + theme_mike() +
+  scale_colour_gradient(low="#000000", high="#DC143C")
+
+cluster7_down.GO.all <- cluster7_down.GO.sig.all[order(cluster7_down.GO.sig.all$padjust, decreasing=FALSE), ]
+
+write.table(cluster7_down.GO.all,
+            file="~/Dropbox/AgeingExperiment/Analysis/Age_dependent_analysis/Cluster7_downDE-MSigDB_enriched.tsv",
+            sep="\t", quote=FALSE, row.names=FALSE)
+
+cluster7_down.p.terms <- ggplot(na.omit(cluster7_down.GO.all[1:10, ]),
+                  aes(x=reorder(Term, 
+                                foldEnrich),
+           y=foldEnrich,
+           fill=-log10(padjust))) +
+  scale_fill_distiller(palette="Reds", direction=1) +
+  geom_bar(stat='identity') + theme_mike() +
+  scale_x_discrete(labels=function(X) str_wrap(X, width=45)) +
+  coord_flip() + labs(x="Gene Signature", y="Fold Enrichment")
+
+ggsave(cluster7_down.p.terms,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure3/Mature_mTEC-DEdown-MSigDB_enrich.png",
+       height=5.75, width=7.75, dpi=300)
+
+#plot_grid(cluster7_down.p.enrich, cluster7_down.p.terms, ncol=2, rel_widths=c(0.3, 0.7))
+```
+
+There's a lot going on here. Much of it relates to changes in transcription and translation.  This might imply changes in protein 
+production or antigen presentation machinery declining in an age-dependent manner.  There's also some changes in metabolism and 
+oxidative phosphorylation, which might also indicate changes in energy production in these cells as a cause or consequence of 
+age-dependent decline in the thymus medulla.
+
+I want a single bar plot with both up and down-regulated genes on it.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.75, fig.width=12.25}
+cluster7_up.GO.all$Direction <- "Up-regulated"
+cluster7_down.GO.all$Direction <- "Down-regulated"
+
+cluster7.GO.all <- do.call(rbind.data.frame,
+                           list("up"=cluster7_up.GO.all[1:5, ],
+                                "down"=cluster7_down.GO.all[1:5, ]))
+cluster7.GO.all$Direction <- factor(cluster7.GO.all$Direction, 
+                                    levels=c("Up-regulated", "Down-regulated"),
+                                    labels=c("Up-regulated", "Down-regulated"))
+
+cluster7_all.p.terms <- ggplot(na.omit(cluster7.GO.all),
+                  aes(x=reorder(Term, 
+                                foldEnrich),
+           y=foldEnrich,
+           fill=-log10(padjust))) +
+  scale_fill_distiller(palette="Reds", direction=1) +
+  geom_bar(stat='identity') + theme_mike() +
+  guides(fill=guide_colourbar(title=expression(paste("-log"[10], " p-value")),
+                              direction="horizontal", barheight=0.5)) + 
+  scale_x_discrete(labels=function(X) str_wrap(X, width=40)) +
+  coord_flip() + labs(x="Gene Signature", y="Fold Enrichment") +
+  theme(axis.text=element_text(size=13, vjust=0.25, hjust=0.5),
+        legend.position="bottom",
+        strip.background=element_rect(fill='white', colour='white')) +
+  facet_wrap(~Direction, ncol=2, scales="free_y") +
+  NULL
+
+ggsave(cluster7_all.p.terms,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure4/Mature_mTEC-MSigDB_enrich.png",
+       height=4.75, width=12.25, dpi=300)
+
+cluster7_all.p.terms
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.75, fig.width=12.25}
+cluster7_all.p.terms <- ggplot(na.omit(na.omit(cluster7.GO.all)),
+                               aes(x=reorder(Term, 
+                                             foldEnrich),
+                                   y=foldEnrich,
+                                   fill=-log10(padjust))) +
+  scale_fill_distiller(palette="Reds", direction=1) +
+  geom_segment(aes(x=reorder(Term, foldEnrich), xend=reorder(Term, foldEnrich), y=0, yend=foldEnrich)) +
+  geom_point(shape=21, size=6) +
+  theme_mike() +
+  scale_x_discrete(labels=function(X) str_wrap(X, width=35)) +
+  coord_flip() + labs(x="Gene Signature", y="Fold Enrichment") +
+  theme(strip.background=element_rect(fill='white', colour='white'),
+        axis.text=element_text(face='bold', size=13),
+        axis.title=element_text(size=16)) +
+  guides(fill=guide_colourbar(title=expression(paste("-log"[10], " FDR")))) +
+  facet_wrap(~Direction, ncol=2, scales="free_y")
+
+ggsave(cluster7_all.p.terms,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure4/Mature_mTEC-MSigDB_enrich.png",
+       height=4.75, width=12.25, dpi=300)
+
+cluster7_all.p.terms
+```
+
+# Thymocyte negative selection figures
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# teach stefano about proper column header naming conventions
+neg.counts <- read_xlsx("~/Dropbox/AgeingExperiment/20181130_negative_selection_counts.xlsx")
+total.counts <- neg.counts$`total | Count`
+samples <- neg.counts$`Sample:`
+
+ages <- as.numeric(gsub(unlist(lapply(strsplit(samples, split="_", fixed=TRUE),
+                                      FUN=function(X) paste0(X[2]))),
+                        pattern="[a-z]+", replacement="", perl=TRUE))
+repl <- as.numeric(gsub(unlist(lapply(strsplit(samples, split="_", fixed=TRUE),
+                                      FUN=function(X) paste0(X[3]))),
+                        pattern="[a-zA-Z]+", replacement="", perl=TRUE))
+
+neg.meta <- data.frame("Sample"=samples, "Age"=ages, "Total.Count"=total.counts, "Replicate"=repl)
+neg.meta$AgeFactor <- ordered(neg.meta$Age,
+                              levels=c(1, 4, 16, 32, 52))
+neg.meta$Sample <- as.character(neg.meta$Sample)
+
+#age.cols <- c("#00E4FF", "#006CFF", "#2A00FF", "#B900FF", "#FF008F")
+age.cols <- viridis(option="magma", n=5)
+names(age.cols) <- levels(neg.meta$AgeFactor)
+```
+
+I'll start by normalising to the total number of input cells.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+norm.counts.list <- apply(neg.counts[, 4:ncol(neg.counts)], 2, FUN=function(X) -log10(X/neg.counts[, 3]))
+
+norm.counts <- do.call(cbind.data.frame,
+                       norm.counts.list)
+colnames(norm.counts) <- colnames(neg.counts[, 4:ncol(neg.counts)])
+norm.counts$Sample <- neg.counts$`Sample:`
+
+neg.merge <- merge(neg.meta, norm.counts, by='Sample')
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# set up the counts matrix properly
+# only select the most terminal populations of cells
+term.pops <- c(34, 15, 25, 18, 27, 12, 22)
+
+offset.list <- list("DPDN.wave1a"=neg.counts[, 33],
+                    "CD4.wave1b"=neg.counts[, 33] - neg.counts[, 34],
+                    "CD8.wave1b"=neg.counts[, 33] - neg.counts[, 34],
+                    "CD4.wave2a"=neg.counts[, 14] - neg.counts[, 15],
+                    "CD8.wave2a"=neg.counts[, 24] - neg.counts[, 25],
+                    "CD4.wave2b"=neg.counts[, 16] - neg.counts[, 18],
+                    "CD8.wave2b"=neg.counts[, 26] - neg.counts[, 27])
+
+# match each population to it's previous surviving population
+select.counts <- as.matrix(t(neg.counts[, term.pops]))
+select.offsets <- as.matrix(t(do.call(cbind, offset.list)))
+rownames(select.offsets) <- rownames(select.counts)
+colnames(select.offsets) <- neg.meta$Sample
+colnames(select.counts) <- neg.meta$Sample
+
+match.counts <- cbind(select.counts, select.offsets)
+child.meta <- neg.meta
+child.meta$Relation <- "Child"
+parent.meta <- neg.meta
+parent.meta$Relation <- "Parent"
+match.meta <- do.call(rbind.data.frame,
+                      list("child"=child.meta, "parent"=parent.meta))
+
+#select.dge <- DGEList(select.counts, lib.size=log(neg.counts$`total/live | Count`))
+select.dge <- DGEList(select.counts, lib.size=NULL)
+select.dge$offset <- log(select.offsets)
+
+#neg.meta$AgeInt <- ordered(neg.meta$Age)
+neg.meta$AgeInt <- log2(neg.meta$Age)
+select.design <- model.matrix(~ AgeInt, neg.meta)
+select.dge <- estimateDisp(select.dge, select.design)
+
+select.fit <- glmQLFit(select.dge, select.design, robust=TRUE)
+
+select.res <- as.data.frame(topTags(glmQLFTest(select.fit, coef=2), n=Inf))
+select.res$Sig <- as.factor(as.numeric(select.res$FDR <= 1e-2))
+select.res$Diff <- sign(select.res$logFC)
+select.res$Diff[select.res$Sig != 1] <- 0
+select.res$Gate <- rownames(select.res)
+
+select.res$TerminalStage <- gsub(gsub(unlist(lapply(strsplit(select.res$Gate, split="/", fixed=TRUE),
+                                                  FUN=function(C) paste0(C[length(C)]))),
+                                    pattern=" ", replacement="_"),
+                               pattern="_\\|_Count", replacement="")
+select.res$ParentStage1 <- gsub(gsub(unlist(lapply(strsplit(select.res$Gate, split="/", fixed=TRUE),
+                                                   FUN=function(C) paste0(C[(length(C)-1)]))), 
+                                     pattern=" ", replacement="_"),
+                                pattern="_\\|_Count", replacement="")
+
+select.res$ParentStage2 <- gsub(gsub(unlist(lapply(strsplit(select.res$Gate, split="/", fixed=TRUE),
+                                                   FUN=function(C) paste(C[(length(C)-3):(length(C)-1)], collapse="."))),
+                                     pattern=" ", replacement="_"),
+                                pattern="_\\|_Count", replacement="")
+select.res$ParentStage1[(select.res$ParentStage1 %in% c("Excl_rec")) & (grepl(select.res$ParentStage2, pattern="CD8"))] <- "CD8"
+select.res$ParentStage1[(select.res$ParentStage1 %in% c("Excl_rec")) & (grepl(select.res$ParentStage2, pattern="CD4"))] <- "CD4"
+
+select.res$CellType <- paste(select.res$ParentStage1, select.res$TerminalStage, sep="\n")
+select.res$Wave <- as.character(as.numeric(grepl(select.res$TerminalStage, pattern="^wave")))
+
+# add an annotation to each subset of cells
+select.res$Selection <- "None"
+select.res$Selection[select.res$Gate %in% c("total/live/TCRpos/lin-/DP&DN/wave 1a | Count")] <- "Cortex.Negative"
+select.res$Selection[select.res$Gate %in% c("total/live/CD4/CD5pos+ or CD24-+ or DP+/SPCD4/CD4conv/CD24+CD69+/CD4 immature/wave 1b | Count",
+                                            "total/live/CD4/CD5pos+ or CD24-+ or DP+/SPCD8/CD24+CD69+/CD8 immature/wave 1b | Count")] <- "CMJ.Positive"
+select.res$Selection[select.res$Gate %in% c("total/live/CD4/CD5pos+ or CD24-+ or DP+/SPCD4/CD4conv/CD24+CD69+/CD4 semimature/wave 2a | Count",
+                                            "total/live/CD4/CD5pos+ or CD24-+ or DP+/SPCD8/CD24+CD69+/CD8 semimature/wave 2a | Count",
+                                            "total/live/CD4/CD5pos+ or CD24-+ or DP+/SPCD8/CD24+CD69+/CD8 semimature/wave 2a | Count",
+                                            "total/live/CD4/CD5pos+ or CD24-+ or DP+/SPCD8/CD8 mature/Excl rec/wave 2b | Count",
+                                            "total/live/CD4/CD5pos+ or CD24-+ or DP+/SPCD4/CD4conv/CD4 mature/Excl rec/wave 2b | Count")] <- "Medulla.Negative"
+
+select.res$Label <- paste(select.res$ParentStage1, select.res$TerminalStage, sep="\n")
+select.res$Label[select.res$Sig == 0] <- ""
+select.res$Label <- gsub(select.res$Label, pattern="_", replacement=" ")
+select.res$Label <- gsub(select.res$Label, pattern="\\.", replacement=" ")
+select.res$Label <- gsub(select.res$Label, pattern="wave", replacement="Wave")
+#select.res$Label <- sapply(select.res$Label, FUN=toupper)
+
+table(select.res$Diff)
+```
+
+Does including the total live cell count as the lib.sizes work the same as providing them as an offset?  There are 2 populations that increase with age, and 3 that declines. 
+It's important to note that the increases and decreases might be for reciprocal populations, i.e. Wave 1a increases means that non-Wave 1a will decrease by construction.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+hist(select.dge$tagwise.dispersion, breaks=10)
+```
+
+Which populations change with age?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+select.res[select.res$Sig ==1,]$Gate
+```
+
+At a false discovery rate of 1%, only 5 of the selected populations change with age, i.e CD4 semimature wave 2a, and CD8 immature Wave 1b.  However, 4 other pre-selection 
+populations are also altered, which might arguably be more informative.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=2.95, fig.width=5.25}
+neg.volcano <- ggplot(select.res, aes(x=logFC, y=-log10(FDR), fill=Sig)) +
+  geom_vline(mapping=aes(xintercept=0), linetype='dashed', colour='grey80') +
+  geom_point(shape=21, size=3) +
+  scale_fill_manual(values=c("black", "firebrick1")) +
+  theme_mike() +
+  guides(fill=FALSE) +
+  labs(x=expression(bold(paste(Delta, " change in cellularity (per log"[2]," week)"))),
+       y=expression(bold(paste("-log"[10], " FDR")))) +
+  geom_text_repel(aes(label=Label),
+                   colour='black',
+                   fill='white',
+                   point.padding=0.5,
+                   box.padding=0.5,
+                   size=5) +
+  theme(text=element_text(size=16),
+        title=element_text(size=14, face='bold')) +
+  scale_x_continuous(limits=c(-2, 2)) +
+  NULL
+
+ggsave(neg.volcano,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure4/Negative_selection-volcano.png",
+       height=2.95, width=5.25, dpi=300)
+
+neg.volcano
+```
+
+OK, seeing as the analysis is different to the plots above, I'll generate the plots for the normalisation based on the previous non-selected cell pool.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+consist.norm <- t(select.counts/select.offsets)
+consist.norm <- as.data.frame(apply(consist.norm, 2, as.numeric))
+
+consist.norm$Sample <- colnames(select.counts)
+
+norm.merge <- merge(neg.meta, consist.norm, by='Sample')
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+norm.melt <- melt(norm.merge, id.vars=c("Sample", "Age", "Total.Count", "Replicate", "AgeFactor", "AgeInt"))
+norm.melt$variable <- as.character(norm.melt$variable)
+norm.melt$TerminalStage <- gsub(gsub(unlist(lapply(strsplit(norm.melt$variable, split="/", fixed=TRUE),
+                                                  FUN=function(C) paste0(C[length(C)]))),
+                                    pattern=" ", replacement="_"),
+                               pattern="_\\|_Count", replacement="")
+norm.melt$ParentStage1 <- gsub(gsub(unlist(lapply(strsplit(norm.melt$variable, split="/", fixed=TRUE),
+                                                   FUN=function(C) paste0(C[(length(C)-1)]))),
+                                     pattern=" ", replacement="_"),
+                                pattern="_\\|_Count", replacement="")
+
+norm.melt$ParentStage2 <- gsub(gsub(unlist(lapply(strsplit(norm.melt$variable, split="/", fixed=TRUE),
+                                                   FUN=function(C) paste(C[(length(C)-3):(length(C)-1)], collapse="."))),
+                                     pattern=" ", replacement="_"),
+                                pattern="_\\|_Count", replacement="")
+norm.melt$ParentStage1[(norm.melt$ParentStage1 %in% c("Excl_rec")) & (grepl(norm.melt$ParentStage2, pattern="CD8"))] <- "CD8"
+norm.melt$ParentStage1[(norm.melt$ParentStage1 %in% c("Excl_rec")) & (grepl(norm.melt$ParentStage2, pattern="CD4"))] <- "CD4"
+
+norm.melt$CellType <- paste(norm.melt$ParentStage1, norm.melt$TerminalStage, sep="\n")
+norm.melt$CellType <- gsub(norm.melt$CellType, pattern="_", replacement=" ")
+norm.melt$CellType <- gsub(norm.melt$CellType, pattern="\\.", replacement=" ")
+norm.melt$CellType <- gsub(norm.melt$CellType, pattern="wave", replacement="Wave")
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.75, fig.width=17.75}
+sig.pops <- select.res[select.res$Sig == 1,]$Gate
+norm.melt$CellType <- factor(norm.melt$CellType,
+                             levels=unique(norm.melt$CellType))
+
+neg.sel.box <- ggplot(norm.melt, #[norm.melt$variable %in% sig.pops, ], 
+       aes(x=TerminalStage, y=log10(value), fill=AgeFactor)) +
+  geom_boxplot(alpha=0.5) +
+  geom_jitter(shape=21, position=position_jitterdodge(jitter.width=0.2)) +
+  theme_mike() +
+  #scale_fill_manual(values=age.cols) +
+  scale_fill_viridis(discrete=TRUE, option="magma") +
+  labs(x="Age (weeks)", y=expression(bold(paste("Log"[10], " Normalised Frequency")))) +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        #panel.grid=element_blank(),
+        strip.text=element_text(size=16),
+        axis.text=element_text(size=16),
+        axis.title=element_text(size=16),
+        strip.background=element_rect(fill='white', colour='black'),
+        plot.background=element_rect(fill='transparent', colour=NA)) +
+  guides(fill=FALSE) +
+  #guides(fill=guide_legend(title="Age (weeks)")) +
+  facet_wrap(~CellType, scales="free", nrow=1)
+
+ggsave(neg.sel.box,
+       bg='transparent',
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure4/Negative_selection-boxplot.png",
+       height=3.75, width=17.75, dpi=300)
+
+
+neg.sel.box
+```
+
