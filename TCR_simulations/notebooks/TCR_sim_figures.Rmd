@@ -1,0 +1,324 @@
+---
+title: "TCR simulations - sample size calculations"
+output: html_notebook
+---
+
+I've run the TCR simulations with several different starting points (random initialisation). I've then randomly sampled different numbers of simulated TCRs from these to 
+compare sample sizes.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+library(ggplot2)
+library(viridis)
+library(reshape2)
+library(lettercase)
+source("~/Dropbox/R_sessions/GGMike/theme_mike.R")
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+col.names <- c("TRA_V",	"TRA_J",	"TRA_len", "TRA_nt", "TRA_entropy", "TRA.Misc", "TRA_AA",	"TRA_Peptide",	"TRA_Valid",	"TRA_CDR1_entropy",	"TRA_CDR1",
+               "TRA_CDR2_entropy",	"TRA_CDR2",
+               "TRA_CDR3_entropy",	"TRA_CDR3",	"TRB_V",	"TRB_J",	"TRB_len", "TRB_nt",	"TRB_entropy",	"TRB_AA",	"TRB_Peptide",	"TRB_Valid",	"TRB_CDR1_entropy",	"TRB_CDR1",
+               "TRB_CDR2_entropy",	"TRB_CDR2",	"TRB_CDR3_entropy",	"TRB_CDR3",	"Valid.TCR")
+tcr.dir <- "~/CI_filesystem/mnt/scratchb/jmlab/morgan02/TCR_simulations/results/"
+sample.size.files <- list.files(tcr.dir, pattern="TCRsim")
+sd.list <- list()
+
+for(x in seq_along(sample.size.files)){
+  s.size <- unlist(strsplit(sample.size.files[x], split="-", fixed=TRUE))[1]
+  s.df <- read.table(paste0(tcr.dir, sample.size.files[x]), sep="\t", header=FALSE, stringsAsFactors=FALSE)
+  colnames(s.df) <- col.names
+  s.df$Sample.Size <- as.numeric(gsub(s.size, pattern="Sample_", replacement=""))
+  sd.list[[s.size]] <- s.df
+}
+
+tcr.sims <- do.call(rbind.data.frame,
+                    sd.list)
+tcr.sims$Sample.Size <- factor(tcr.sims$Sample.Size,
+                               levels=c(10, 100, 500, 1000, 5000, 10000, 20000, 50000, 100000))
+```
+
+First, what % of TCRs are valid?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(tcr.sims, aes(x=Sample.Size, fill=Valid.TCR)) +
+  geom_bar(position='fill') +
+  theme_mike() +
+  scale_fill_Publication() +
+  labs(x="Sample Size", y="Proportion valid TCRs")
+
+ggsave(filename="~/Dropbox/AgeingExperiment/Paper/Figures/ProductionSupplemental/SF13/Valid_TCRs.pdf",
+       height=3.55, width=6.15, useDingbats=FALSE)
+```
+
+There's a bit of fluctuation, but for the most part ~70% of simulated TCRs are non-functional. I would expect that in reality when we do the TCR-sequencing, we will have a 
+population of thymocytes strongly enriched for functional TCRs (part of cortical positive selection).
+
+I'll subset to just the functional TCRs for each sample size.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+valid.tcr <- tcr.sims[tcr.sims$Valid.TCR %in% c("True"), ]
+table(valid.tcr$Sample.Size)
+```
+
+Next, what does the distribution of TRA and TRB V(D)J regions look like for each sample size?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.25, fig.width=14.75}
+trav.table <- as.data.frame(apply(table(valid.tcr$TRA_V, valid.tcr$Sample.Size), 2, FUN=function(X) X/sum(X)))
+trav.table$TRA_V <- rownames(trav.table)
+trav.table <- melt(trav.table, id.vars='TRA_V')
+
+ggplot(trav.table, aes(x=TRA_V, y=value, fill=variable)) +
+  geom_bar(position='dodge', stat='identity') +
+  theme_mike() +
+  scale_fill_Publication() +
+  theme(axis.text.x = element_blank()) +
+  labs(x="TRA V segment", y="Proportion") +
+  facet_wrap(~variable, scales='free') +
+  NULL
+
+ggsave(filename="~/Dropbox/AgeingExperiment/Paper/Figures/ProductionSupplemental/SF13/TRA_V_usage.pdf",
+       height=5.25, width=14.75, useDingbats=FALSE)
+```
+
+The x-axis are the unorderd TRA V segments. As expected as the sample size increases we start to get beter representtion of V segments. By around 10-20k initial TCRs we have 
+a pretty good, and uniform, representation of all segments.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.25, fig.width=14.75}
+traj.table <- as.data.frame(apply(table(valid.tcr$TRA_J, valid.tcr$Sample.Size), 2, FUN=function(X) X/sum(X)))
+traj.table$TRA_J <- rownames(traj.table)
+traj.table <- melt(traj.table, id.vars='TRA_J')
+
+ggplot(traj.table, aes(x=TRA_J, y=value, fill=variable)) +
+  geom_bar(position='dodge', stat='identity') +
+  theme_mike() +
+  scale_fill_Publication() +
+  theme(axis.text.x = element_blank()) +
+  labs(x="TRA J segment", y="Proportion") +
+  facet_wrap(~variable, scales='free') +
+  NULL
+
+ggsave(filename="~/Dropbox/AgeingExperiment/Paper/Figures/ProductionSupplemental/SF13/TRA_J_usage.pdf",
+       height=5.25, width=14.75, useDingbats=FALSE)
+```
+
+We have a similar picture for the J-segments, it looks like by 10,000 sampled TCRs we've got a good sampling of TRA segments.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.25, fig.width=14.75}
+trbv.table <- as.data.frame(apply(table(valid.tcr$TRB_V, valid.tcr$Sample.Size), 2, FUN=function(X) X/sum(X)))
+trbv.table$TRB_V <- rownames(trbv.table)
+trbv.table <- melt(trbv.table, id.vars='TRB_V')
+
+ggplot(trbv.table, aes(x=TRB_V, y=value, fill=variable)) +
+  geom_bar(position='dodge', stat='identity') +
+  theme_mike() +
+  scale_fill_Publication() +
+  theme(axis.text.x = element_blank()) +
+  labs(x="TRB V segment", y="Proportion") +
+  facet_wrap(~variable, scales='free') +
+  NULL
+
+ggsave(filename="~/Dropbox/AgeingExperiment/Paper/Figures/ProductionSupplemental/SF13/TRB_V_usage.pdf",
+       height=5.25, width=14.75, useDingbats=FALSE)
+```
+
+The x-axis are the unorderd TRB V segments - there are fewer TRB segments than TRA. Again, sampling is less variable around 10-20k TCRs.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.25, fig.width=14.75}
+trbj.table <- as.data.frame(apply(table(valid.tcr$TRB_J, valid.tcr$Sample.Size), 2, FUN=function(X) X/sum(X)))
+trbj.table$TRB_J <- rownames(trbj.table)
+trbj.table <- melt(trbj.table, id.vars='TRB_J')
+
+ggplot(trbj.table, aes(x=TRB_J, y=value, fill=variable)) +
+  geom_bar(position='dodge', stat='identity') +
+  theme_mike() +
+  scale_fill_Publication() +
+  theme(axis.text.x = element_blank()) +
+  labs(x="TRB J segment", y="Proportion") +
+  facet_wrap(~variable, scales='free') +
+  NULL
+
+ggsave(filename="~/Dropbox/AgeingExperiment/Paper/Figures/ProductionSupplemental/SF13/TRB_J_usage.pdf",
+       height=5.25, width=14.75, useDingbats=FALSE)
+```
+
+The same picture for TRB J segments. The TRB D segments were not recorded in the simulations. From these analyses, it looks like somewhere between 10-20k cells should be 
+sufficient to accurately estimate the different TCR segment usage statistics.
+
+Now for CDR3 entropy, which is what we are interested in from a repertoire diversity perspective.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(valid.tcr, aes(x=Sample.Size, y=TRA_CDR3_entropy)) +
+  geom_boxplot() +
+  theme_mike() +
+  NULL
+
+ggsave(filename="~/Dropbox/AgeingExperiment/Paper/Figures/ProductionSupplemental/SF13/TRA_CDR3_entropy.pdf",
+       height=3.95, width=6.75, useDingbats=FALSE)
+```
+
+This is the distribution of TRA CDR3 entropies - it looks pretty stable from ~5000 TCRs onwards.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(valid.tcr, aes(x=Sample.Size, y=TRB_CDR3_entropy)) +
+  geom_boxplot() +
+  theme_mike() +
+  NULL
+
+ggsave(filename="~/Dropbox/AgeingExperiment/Paper/Figures/ProductionSupplemental/SF13/TRB_CDR3_entropy.pdf",
+       height=3.95, width=6.75, useDingbats=FALSE)
+```
+
+This is the distribution of TRB CDR3 entropies. It also looks stable from ~5000 samples TCRs onwards. What about the whole TCR repertoire entropy? This is a reflection of 
+how diversity the whole _pool_ of functional TCRs is. 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+aa.alphabet <- c("F", "I", "S", "T", "Y", "N", "C", "L", "K", "\\*", "R", "M", "W", "V", "P", "A", "H", "D", "G", "Q", "E")
+calc_freqs <- function(aa, alphabet){
+  str_count(aa, alphabet)/sum(str_count(aa, alphabet))
+}
+
+calc_entropy <- function(freq.vector){
+  require(lettercase)
+  # given a vector of frequencies, calculate the Shannon Entropy for each
+  # -sum(pi*log(pi)), where pi =  frequency
+  # hmm, need to deal with the log(0)s, set Inf to 0
+  log.freq <- log2(freq.vector)
+  log.freq[is.infinite(log.freq)] <- 0
+  
+  -sum(freq.vector * log.freq)
+}
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# tabulate the CDR3 clonotypes in each sample
+tra.clono.tab <- as.data.frame(apply(table(valid.tcr$TRA_CDR3, valid.tcr$Sample.Size), 2, FUN=function(X) X/sum(X)))
+tra.cdr3.entropy <- unlist(lapply(tra.clono.tab, FUN=function(A) calc_entropy(A)))
+
+trb.clono.tab <- as.data.frame(apply(table(valid.tcr$TRB_CDR3, valid.tcr$Sample.Size), 2, FUN=function(X) X/sum(X)))
+trb.cdr3.entropy <- unlist(lapply(trb.clono.tab, FUN=function(A) calc_entropy(A)))
+
+entropy.df <- data.frame("Sample.Size"=levels(valid.tcr$Sample.Size), "TRA.Entropy"=tra.cdr3.entropy, "TRB.Entropy"=trb.cdr3.entropy)
+entropy.melt <- melt(entropy.df, id.vars='Sample.Size')
+entropy.melt$Chain <- "Alpha"
+entropy.melt$Chain[grepl(entropy.melt$variable, pattern="TRB")] <- "Beta"
+
+entropy.melt$Sample.Size <- factor(entropy.melt$Sample.Size,
+                                   levels=c(10, 100, 500, 1000, 5000, 10000, 20000, 50000, 100000))
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(entropy.melt, aes(x=Sample.Size, y=value, fill=Chain)) +
+  geom_point(shape=21, size=3.5) +
+  theme_mike() +
+  scale_fill_Publication() +
+  expand_limits(y=c(0)) +
+labs(x="Sample Size", y="Shannon Entropy")
+```
+
+This is the entropy, using the frequency of distinct clonotypes to measure diversity. I'd also like to know what the distribution or spread of these entropy values are. This 
+is where the additional simulations come in which act as replicates; I'll show it with 1-5 replicates.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+col.names <- c("TRA_V",	"TRA_J",	"TRA_len", "TRA_nt", "TRA_entropy", "TRA.Misc", "TRA_AA",	"TRA_Peptide",	"TRA_Valid",	"TRA_CDR1_entropy",	"TRA_CDR1",
+               "TRA_CDR2_entropy",	"TRA_CDR2",
+               "TRA_CDR3_entropy",	"TRA_CDR3",	"TRB_V",	"TRB_J",	"TRB_len", "TRB_nt",	"TRB_entropy",	"TRB_AA",	"TRB_Peptide",	"TRB_Valid",	"TRB_CDR1_entropy",	"TRB_CDR1",
+               "TRB_CDR2_entropy",	"TRB_CDR2",	"TRB_CDR3_entropy",	"TRB_CDR3",	"Valid.TCR")
+tcr.dir <- "~/CI_filesystem/mnt/scratchb/jmlab/morgan02/TCR_simulations/results/"
+sample.size.files <- list.files(tcr.dir, pattern="TCRsim")
+sd.list <- list()
+
+for(x in seq_along(sample.size.files)){
+  s.size <- unlist(strsplit(sample.size.files[x], split="-", fixed=TRUE))[1]
+  run.number <- gsub(unlist(strsplit(sample.size.files[x], split="-", fixed=TRUE))[3], pattern="\\.txt", replacement="")
+  
+  s.df <- read.table(paste0(tcr.dir, sample.size.files[x]), sep="\t", header=FALSE, stringsAsFactors=FALSE)
+  colnames(s.df) <- col.names
+  s.df$Sample.Size <- as.numeric(gsub(s.size, pattern="Sample_", replacement=""))
+  s.df$Run <- run.number
+  sd.list[[paste0(run.number, s.size)]] <- s.df
+}
+
+tcr.sims <- do.call(rbind.data.frame,
+                    sd.list)
+tcr.sims$Sample.Size <- factor(tcr.sims$Sample.Size,
+                               levels=c(10, 100, 500, 1000, 5000, 10000, 20000, 50000, 100000))
+valid.reps <- tcr.sims[tcr.sims$Valid.TCR %in% c("True"), ]
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# tabulate the CDR3 clonotypes in each sample
+tra.xtab <- xtabs(data=valid.reps, ~ TRA_CDR3 + Sample.Size + Run)
+tra.clono.tab <- as.data.frame(tra.xtab)
+
+# normalise within sample size and run number
+norm.freq <- by(tra.clono.tab$Freq, INDICES=list("Sample.Size"=tra.clono.tab$Sample.Size, "Run"=tra.clono.tab$Run),
+                FUN=function(X) X/sum(X))
+tra.clono.tab$NormFreq <- unlist(norm.freq)
+tra.rep.entropy <- by(tra.clono.tab$NormFreq, INDICES=list("Sample.Size"=tra.clono.tab$Sample.Size, "Run"=tra.clono.tab$Run),
+                      FUN=function(E) calc_entropy(E))
+
+# tabulate the TRB CDR3 clonotypes in each sample
+trb.xtab <- xtabs(data=valid.reps, ~ TRB_CDR3 + Sample.Size + Run)
+trb.clono.tab <- as.data.frame(trb.xtab)
+
+# normalise within sample size and run number
+norm.freq <- by(trb.clono.tab$Freq, INDICES=list("Sample.Size"=trb.clono.tab$Sample.Size, "Run"=trb.clono.tab$Run),
+                FUN=function(X) X/sum(X))
+trb.clono.tab$NormFreq <- unlist(norm.freq)
+trb.rep.entropy <- by(trb.clono.tab$NormFreq, INDICES=list("Sample.Size"=trb.clono.tab$Sample.Size, "Run"=trb.clono.tab$Run),
+                      FUN=function(E) calc_entropy(E))
+
+comb.df <- expand.grid(levels(tra.clono.tab$Sample.Size), levels(tra.clono.tab$Run))
+combos <- paste(comb.df$Var1, comb.df$Var2, sep="_")
+
+rep.entropy.df <- data.frame("Combo"=combos, "TRA.Entropy"=as.numeric(tra.rep.entropy), "TRB.Entropy"=as.numeric(trb.rep.entropy))
+rep.entropy.df$Sample.Size <- as.numeric(unlist(lapply(strsplit(as.character(rep.entropy.df$Combo), split="_", fixed=TRUE), FUN=function(P) paste0(P[1]))))
+rep.entropy.df$Run <- unlist(lapply(strsplit(as.character(rep.entropy.df$Combo), split="_", fixed=TRUE), FUN=function(P) paste0(P[2])))
+rep.entropy.melt <- melt(rep.entropy.df, id.vars=c('Sample.Size', 'Run', 'Combo'))
+rep.entropy.melt$Chain <- "Alpha"
+rep.entropy.melt$Chain[grepl(rep.entropy.melt$variable, pattern="TRB")] <- "Beta"
+ 
+rep.entropy.melt$Sample.Size <- factor(rep.entropy.melt$Sample.Size,
+                                       levels=c(10, 100, 500, 1000, 5000, 10000, 20000, 50000, 100000))
+#rep.entropy.melt$value <- as.numeric(as.character(rep.entropy.melt$value))
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(rep.entropy.melt, aes(x=Sample.Size, y=value, fill=Chain)) +
+  geom_boxplot() +
+  #geom_point(shape=21, size=3.5) +
+  theme_mike() +
+  scale_fill_Publication() +
+  expand_limits(y=c(0)) +
+labs(x="Sample Size", y="Shannon Entropy")
+
+ggsave(filename="~/Dropbox/AgeingExperiment/Paper/Figures/ProductionSupplemental/SF13/TCR_entropy_10reps.pdf",
+       height=3.95, width=6.75, useDingbats=FALSE)
+```
+
+This shows the distribution of entropyies across all 10 replicates at different sample sizes, what about using different numbers of replicates?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(rep.entropy.melt[rep.entropy.melt$Run %in% paste0("Run", 1:3), ], aes(x=Sample.Size, y=value, fill=Chain)) +
+  geom_boxplot() +
+  #geom_point(shape=21, size=3.5) +
+  theme_mike() +
+  scale_fill_Publication() +
+  expand_limits(y=c(0)) +
+labs(x="Sample Size", y="Shannon Entropy")
+
+ggsave(filename="~/Dropbox/AgeingExperiment/Paper/Figures/ProductionSupplemental/SF13/TCR_entropy_3reps.pdf",
+       height=3.95, width=6.75, useDingbats=FALSE)
+```
+
+This is the distribution of Shannon entropies using just 3 replicates. These look pretty consistent. These calculations also give us an idea of the magnitude of the Shannon 
+entropy values to expect. So for 10-20k input cells we might expect Shannon entropy values between ~11-13.
+
+
+
+

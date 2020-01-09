@@ -1,0 +1,848 @@
+---
+title: "Thymus Aging: QC - initial"
+output: html_notebook
+author: "Mike Morgan"
+---
+
+# Introduction
+
+This report lays out the initial QC results from the aging project.  So far the first ~23365  FASTQ files (~11682 
+sequenced libraries), have been passed through the sequence quality control section of the pipeline.  I'll present 
+a couple of different measures:
+
+* __Per-base sequence quality__ - how good is the base-calling algorithm able to discriminate nucleotides based 
+on where they are in the sequenced read?
+* __GC content__ - what is the distribution of G+C across all reads for a given library?  Are there execessively high or 
+excessively low libraries? Most libraries should fall between 40-60%, any extreme values are indicative of catastrophic 
+failure during either library preparation, or sequencing, or are due to external contamination.
+* __Nucleotide content__ - how well balanced are the four nucleotides over the read length.  Extreme deviations 
+could reflect failures in library prepartion, base calling or external contamination.
+* __Overrepresented sequences__ - these represent sequences that are enriched in a library.  These could represent 
+adaptor or primer sequences at the ends of reads, or a few mRNA species that dominate the library.  For instance, if 
+cell sorting or lysis has failed then the ERCC spike in sequence would dominate the library.
+* __Sequence duplication__ - these represent PCR duplicates that arise from the same mRNA fragment, or optical 
+duplicates that the sequencer has erroneously called into the same cluster.  The former are problematic for 
+gene expression quantification and need to be identified and removed.  Single-cell library duplication rates are 
+often very high, on the order of 60%-80%, so is expected here.
+
+I'll also breakdown the results into the different plates, plate positions, sorted cell types and mouse ages based on 
+the plate layouts.  In addition there are known empty wells, and mini-bulk samples of 10 or 50 cells which are identified 
+based on their plate position.
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+## Thymus Aging project initial QC results
+library(ggplot2)
+library(scales)
+library(reshape2)
+source("~/Dropbox/R_sessions/GGMike/theme_mike.R")
+plate.layout <- read.table("~/Dropbox/Thymus/Aging_experiment/Experimental_plate_layout.txt",
+                           sep="\t", h=TRUE, stringsAsFactors=FALSE, row.names=NULL)
+plate.ids <- paste0("B00", c(2297, 2229, 2285, 2287, 2289, 2286, 2294, 2284, 2283, 2288, 2295, 2296, 
+                             2290, 2291, 2292, 2293, 2298, 2300, 2301, 1631, 1630, 1629, 1632, 2336,
+                             2345, 2450, 2449, 2337, 2451, 2601, 2299))
+
+plate.list <- list()
+for(px in seq_along(plate.ids)){
+  pname <- plate.ids[px]
+  .p_layout <- plate.layout
+  .p_layout$PlateID <- pname
+  plate.list[[px]] <- .p_layout
+}
+
+plate.meta <- do.call(rbind.data.frame,
+                      plate.list)
+
+# add in mouse age information
+# there are 5 different types of plate layout, and 1 extra plate
+# spec 1
+plate.meta$Age[(plate.meta$Column %in% c(1:8)) & (plate.meta$Row != "A") & 
+                 (plate.meta$PlateID %in% paste0("B00", c(2289, 2286, 2295, 2296, 2298, 
+                                                          2300, 1629, 1632, 2337, 2451)))] <- "1wk"
+
+plate.meta$Age[(plate.meta$Column %in% c(9:16)) & (plate.meta$Row != "A") & 
+                 (plate.meta$PlateID %in% paste0("B00", c(2289, 2286, 2295, 2296, 2298, 
+                                                          2300, 1629, 1632, 2337, 2451)))] <- "16wk"
+
+plate.meta$Age[(plate.meta$Column %in% c(17:24)) & (plate.meta$Row != "A") & 
+                 (plate.meta$PlateID %in% paste0("B00", c(2289, 2286, 2295, 2296, 2298, 
+                                                          2300, 1629, 1632, 2337, 2451)))] <- "4wk"
+
+# spec2
+# add in mouse age information
+plate.meta$Age[(plate.meta$Column %in% c(1:8)) & (plate.meta$Row != "A") & 
+                 (plate.meta$PlateID %in% paste0("B00", c(2297, 2294, 2290, 2301, 2336, 2299)))] <- "32wk"
+
+plate.meta$Age[(plate.meta$Column %in% c(9:16)) & (plate.meta$Row != "A") & 
+                 (plate.meta$PlateID %in% paste0("B00", c(2297, 2294, 2290, 2301, 2336, 2299)))] <- "4wk"
+
+plate.meta$Age[(plate.meta$Column %in% c(17:24)) & (plate.meta$Row != "A") & 
+                 (plate.meta$PlateID %in% paste0("B00", c(2297, 2294, 2290, 2301, 2336, 2299)))] <- "52wk"
+
+
+# spec3
+# add in mouse age information
+plate.meta$Age[(plate.meta$Column %in% c(1:8)) & (plate.meta$Row != "A") & 
+                 (plate.meta$PlateID %in% paste0("B00", c(2229, 2284, 2291, 2345, 2601)))] <- "52wk"
+
+plate.meta$Age[(plate.meta$Column %in% c(9:16)) & (plate.meta$Row != "A") & 
+                 (plate.meta$PlateID %in% paste0("B00", c(2229, 2284, 2291, 2345, 2601)))] <- "1wk"
+
+plate.meta$Age[(plate.meta$Column %in% c(17:24)) & (plate.meta$Row != "A") & 
+                 (plate.meta$PlateID %in% paste0("B00", c(2229, 2284, 2291, 2345, 2601)))] <- "32wk"
+
+
+# spec4
+# add in mouse age information
+plate.meta$Age[(plate.meta$Column %in% c(1:8)) & (plate.meta$Row != "A") & 
+                 (plate.meta$PlateID %in% paste0("B00", c(2287, 2288, 2293, 1630, 2449)))] <- "16wk"
+
+plate.meta$Age[(plate.meta$Column %in% c(9:16)) & (plate.meta$Row != "A") & 
+                 (plate.meta$PlateID %in% paste0("B00", c(2287, 2288, 2293, 1630, 2449)))] <- "32wk"
+
+plate.meta$Age[(plate.meta$Column %in% c(17:24)) & (plate.meta$Row != "A") & 
+                 (plate.meta$PlateID %in% paste0("B00", c(2287, 2288, 2293, 1630, 2449)))] <- "1wk"
+
+
+# spec5
+# add in mouse age information
+plate.meta$Age[(plate.meta$Column %in% c(1:8)) & (plate.meta$Row != "A") & 
+                 (plate.meta$PlateID %in% paste0("B00", c(2285, 2283, 2292, 2450)))] <- "4wk"
+
+plate.meta$Age[(plate.meta$Column %in% c(9:16)) & (plate.meta$Row != "A") & 
+                 (plate.meta$PlateID %in% paste0("B00", c(2285, 2283, 2292, 2450)))] <- "52wk"
+
+plate.meta$Age[(plate.meta$Column %in% c(17:24)) & (plate.meta$Row != "A") & 
+                 (plate.meta$PlateID %in% paste0("B00", c(2285, 2283, 2292, 2450)))] <- "16wk"
+
+
+# spec6
+# add in mouse age information
+plate.meta$Age[(plate.meta$Column %in% c(1:8)) & (plate.meta$Row != "A") & 
+                 (plate.meta$PlateID %in% paste0("B00", c(1631)))] <- "4wk"
+
+plate.meta$Age[(plate.meta$Column %in% c(9:16)) & (plate.meta$Row != "A") & 
+                 (plate.meta$PlateID %in% paste0("B00", c(1631)))] <- "1wk"
+
+plate.meta$Age[(plate.meta$Column %in% c(17:24)) & (plate.meta$Row != "A") & 
+                 (plate.meta$PlateID %in% paste0("B00", c(1631)))] <- "16wk"
+
+# add sorting day information
+plate.meta$SortDay[plate.meta$PlateID %in% paste0("B00", c(2297, 2229, 2285, 2287, 2289, 2286))] <- 1
+plate.meta$SortDay[plate.meta$PlateID %in% paste0("B00", c(2294, 2284, 2283, 2288, 2295, 2296))] <- 2
+plate.meta$SortDay[plate.meta$PlateID %in% paste0("B00", c(2290, 2291, 2292, 2293, 2298, 2300))] <- 3
+plate.meta$SortDay[plate.meta$PlateID %in% paste0("B00", c(2301, 1631, 1630, 1629, 1632))] <- 4
+plate.meta$SortDay[plate.meta$PlateID %in% paste0("B00", c(2336, 2345, 2450, 2449, 2337, 2451, 2601, 2299))] <- 5
+
+# exclusions
+# some plates aren't full, and some of the minibulks could not be generated due to insufficient material
+# add in the minibulk age and cell type designation
+plate.meta$Age[(plate.meta$Row == "A") & (plate.meta$Column %in% c(9, 12, 15, 18)) &
+                 (plate.meta$PlateID %in% paste0("B00", c(2289, 2286, 2295, 2296, 2298, 
+                                                          2300, 1629, 1632, 2337, 2451)))] <- "1wk"
+
+plate.meta$Age[(plate.meta$Row == "A") & (plate.meta$Column %in% c(10, 13, 16, 19)) &
+                 (plate.meta$PlateID %in% paste0("B00", c(2289, 2286, 2295, 2296, 2298, 
+                                                          2300, 1629, 1632, 2337, 2451)))] <- "16wk"
+
+plate.meta$Age[(plate.meta$Row == "A") & (plate.meta$Column %in% c(11, 14, 17, 20)) &
+                 (plate.meta$PlateID %in% paste0("B00", c(2289, 2286, 2295, 2296, 2298, 
+                                                          2300, 1629, 1632, 2337, 2451)))] <- "4wk"
+
+plate.meta$Age[(plate.meta$Row == "A") & (plate.meta$Column %in% c(9, 12, 15, 18)) &
+                 (plate.meta$PlateID %in% paste0("B00", c(2297, 2294, 2290, 2301, 2336, 2299)))] <- "32wk"
+
+plate.meta$Age[(plate.meta$Row == "A") & (plate.meta$Column %in% c(10, 13, 16, 19)) &
+                 (plate.meta$PlateID %in% paste0("B00", c(2297, 2294, 2290, 2301, 2336, 2299)))] <- "4wk"
+
+plate.meta$Age[(plate.meta$Row == "A") & (plate.meta$Column %in% c(11, 14, 17, 20)) &
+                 (plate.meta$PlateID %in% paste0("B00", c(2297, 2294, 2290, 2301, 2336, 2299)))] <- "52wk"
+
+plate.meta$Age[(plate.meta$Row == "A") & (plate.meta$Column %in% c(9, 12, 15, 18)) &
+                 (plate.meta$PlateID %in% paste0("B00", c(2229, 2284, 2291, 2345, 2601)))] <- "52wk"
+
+plate.meta$Age[(plate.meta$Row == "A") & (plate.meta$Column %in% c(10, 13, 16, 19)) &
+                 (plate.meta$PlateID %in% paste0("B00", c(2229, 2284, 2291, 2345, 2601)))] <- "1wk"
+
+plate.meta$Age[(plate.meta$Row == "A") & (plate.meta$Column %in% c(11, 14, 17, 20)) &
+                 (plate.meta$PlateID %in% paste0("B00", c(2229, 2284, 2291, 2345, 2601)))] <- "32wk"
+
+plate.meta$Age[(plate.meta$Row == "A") & (plate.meta$Column %in% c(9, 12, 15, 18)) &
+                 (plate.meta$PlateID %in% paste0("B00", c(2287, 2288, 2293, 1630, 2449)))] <- "16wk"
+
+plate.meta$Age[(plate.meta$Row == "A") & (plate.meta$Column %in% c(10, 13, 16, 19)) &
+                 (plate.meta$PlateID %in% paste0("B00", c(2287, 2288, 2293, 1630, 2449)))] <- "32wk"
+
+plate.meta$Age[(plate.meta$Row == "A") & (plate.meta$Column %in% c(11, 14, 17, 20)) &
+                 (plate.meta$PlateID %in% paste0("B00", c(2287, 2288, 2293, 1630, 2449)))] <- "1wk"
+
+
+plate.meta$Age[(plate.meta$Row == "A") & (plate.meta$Column %in% c(9, 12, 15, 18)) &
+                 (plate.meta$PlateID %in% paste0("B00", c(2285, 2283, 2292, 2450)))] <- "4wk"
+
+plate.meta$Age[(plate.meta$Row == "A") & (plate.meta$Column %in% c(10, 13, 16, 19)) &
+                 (plate.meta$PlateID %in% paste0("B00", c(2285, 2283, 2292, 2450)))] <- "52wk"
+
+plate.meta$Age[(plate.meta$Row == "A") & (plate.meta$Column %in% c(11, 14, 17, 20)) &
+                 (plate.meta$PlateID %in% paste0("B00", c(2285, 2283, 2292, 2450)))] <- "16wk"
+
+
+plate.meta$Age[(plate.meta$Row == "A") & (plate.meta$Column %in% c(9, 12, 15, 18)) &
+                 (plate.meta$PlateID %in% paste0("B00", c(1631)))] <- "4wk"
+
+plate.meta$Age[(plate.meta$Row == "A") & (plate.meta$Column %in% c(10, 13, 16, 19)) &
+                 (plate.meta$PlateID %in% paste0("B00", c(1631)))] <- "1wk"
+
+plate.meta$Age[(plate.meta$Row == "A") & (plate.meta$Column %in% c(11, 14, 17, 20)) &
+                 (plate.meta$PlateID %in% paste0("B00", c(1631)))] <- "16wk"
+
+# label all of the minibulk samples
+plate.meta$SortType <- "Single"
+plate.meta$SortType[(plate.meta$Row == "A") & (plate.meta$Column %in% c(9:20))] <- "Minibulk"
+plate.meta$SortType[(plate.meta$Row == "A") & (plate.meta$Column %in% c(1:8))] <- "IntCNTRL"
+plate.meta$SortType[(plate.meta$Row == "A") & (plate.meta$Column %in% c(21:24))] <- "NegCNTRL"
+
+write.table(plate.meta,
+            "~/Dropbox/Thymus/Aging_experiment/Theoretical_meta_data.txt",
+            quote=FALSE, row.names=FALSE, sep="\t")
+```
+
+
+## Per-base sequence quality
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+base_quals <- read.table("~/CI_filesystem/mnt/nas2-data/jmlab/group_folders/morgan02/Thymus/FastQC_BaseQuals.tsv.gz",
+                         sep="\t", h=TRUE, stringsAsFactors=FALSE)
+# exclude any spine plates that have crept in
+base_quals <- base_quals[!grepl(base_quals$Filename, pattern="ARA"), ]
+
+# parse the file name to get the relevant plate and position information
+file.parse <- strsplit(base_quals$Filename, split="-", fixed=T)
+file.pos <- unlist(lapply(file.parse, FUN=function(X) paste0(X[1])))
+file.plate <- unlist(lapply(file.parse, FUN=function(X) paste0(X[2])))
+file.row <- substr(file.pos, 0, 1)
+file.column <- as.numeric(substr(file.pos, 2, 3))
+
+base_quals$PlateID <- file.plate
+base_quals$Row <- file.row
+base_quals$Column <- file.column
+
+base_quals$Base <- factor(base_quals$Base,
+                          levels=c("1", "2", "3", "4", "5", "6", "7", "8", "9", "10-11", "12-13",
+                                   "14-15", "16-17", "18-19", "20-21", "22-23", "24-25", "26-27",
+                                   "28-29", "30-31", "32-33", "34-35", "36-37", "38-39", "40-41",
+                                   "42-43", "44-45", "46-47", "48-49", "50-51", "52-53", "54-55",
+                                   "56-57", "58-59", "60-61", "62-63", "64-65", "66-67", "68-69",
+                                   "70-71", "72-73", "74-75", "76-77", "78-79", "80-81", "82-83",
+                                   "84-85", "86-87", "88-89", "90-91", "92-93", "94-95", "96-97",
+                                   "98-99", "100"),
+                        labels=c("1", "2", "3", "4", "5", "6", "7", "8", "9", "10-11", "12-13",
+                                 "14-15", "16-17", "18-19", "20-21", "22-23", "24-25", "26-27",
+                                 "28-29", "30-31", "32-33", "34-35", "36-37", "38-39", "40-41",
+                                 "42-43", "44-45", "46-47", "48-49", "50-51", "52-53", "54-55",
+                                 "56-57", "58-59", "60-61", "62-63", "64-65", "66-67", "68-69",
+                                 "70-71", "72-73", "74-75", "76-77", "78-79", "80-81", "82-83",
+                                 "84-85", "86-87", "88-89", "90-91", "92-93", "94-95", "96-97",
+                                 "98-99", "100"))
+
+ggplot(base_quals, aes(x=Base, y=Mean)) + 
+  geom_boxplot() + theme_mike() +
+  theme(axis.text.x=element_text(angle=90, size=10, vjust=0.5)) +
+  labs(x="Base", y="Sequence Quality")
+```
+
+For the most part libraries are consistent around a quality score of 30, which is pretty good.  At the very beginning and 
+owards the end of reads the quality is known to decline, but still remains above 30 which is a very good sign.  
+There are some libraries that fall below the threshold for outliers (1.5 times the lower 25th quantile), which 
+are represented as black points.
+
+We can also see this information broken down by plate, well position (column or row-wise), cell type or mouse age.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+base_quals.merge <- merge(base_quals, plate.meta, by=c('PlateID', 'Row', 'Column'), all=TRUE)
+```
+
+### Base sequence quality by plate ID
+
+```{r, echo=FALSE}
+# trying to identify missing files/wells
+# need a list of known missing positions
+missing.minibulks <- c("A9-B002229", "A12-B002229", "A15-B002229", "A18-B002229",
+                       "A10-B002285", "A13-B002285", "A16-B002285", "A19-B002285",
+                       "A10-B002287", "A13-B002287", "A16-B002287", "A19-B002287",
+                       "A9-B002286", "A10-B002286", "A11-B002286", "A12-B002286",
+                       "A13-B002286", "A14-B002286", "A15-B002286", "A16-B002286",
+                       "A17-B002286", "A18-B002286", "A19-B002286", "A20-B002286",
+                       "A9-B002284", "A12-B002284", "A15-B002284", "A18-B002284",
+                       "A11-B002284", "A14-B002284", "A17-B002284", "A20-B002284",
+                       "A10-B002283", "A13-B002283", "A16-B002283", "A19-B002283",
+                       "A10-B002288", "A13-B002288", "A16-B002288", "A19-B002288",
+                       "A9-B002296", "A10-B002296", "A11-B002296", "A12-B002296",
+                       "A13-B002296", "A14-B002296", "A15-B002296", "A16-B002296",
+                       "A17-B002296", "A18-B002296", "A19-B002296", "A20-B002296",
+                       "A9-B002291", "A10-B002291", "A11-B002291", "A12-B002291",
+                       "A17-B002291", "A18-B002291", "A19-B002291", "A20-B002291",
+                       "A10-B002292", "A13-B002292", "A16-B002292", "A19-B002292",
+                       "A10-B002293", "A13-B002293", "A16-B002293", "A19-B002293",
+                       "A9-B002300", "A10-B002300", "A11-B002300", "A12-B002300",
+                       "A13-B002300", "A14-B002300", "A15-B002300", "A16-B002300",
+                       "A17-B002300", "A18-B002300", "A19-B002300", "A20-B002300",
+                       "A9-B002301", "A12-B002301", "A15-B002301", "A18-B002301",
+                       "A11-B002301", "A14-B002301", "A17-B002301", "A20-B002301",
+                       "A10-B001630", "A13-B001630", "A16-B001630", "A19-B001630",
+                       "A10-B001632", "A13-B001632", "A16-B001632", "A19-B001632",
+                       "A11-B002336", "A14-B002336", "A17-B002336", "A20-B002336",
+                       "A11-B002345", "A14-B002345", "A17-B002345", "A20-B002345",
+                       "A10-B002337", "A13-B002337", "A16-B002337", "A19-B002337",
+                       "A9-B002451", "A10-B002451", "A11-B002451", "A12-B002451",
+                       "A13-B002451", "A14-B002451", "A15-B002451", "A16-B002451",
+                       "A17-B002451", "A18-B002451", "A19-B002451", "A20-B002451",
+                       "A9-B002601", "A10-B002601", "A11-B002601", "A12-B002601",
+                       "A13-B002601", "A14-B002601", "A15-B002601", "A16-B002601",
+                       "A17-B002601", "A18-B002601", "A19-B002601", "A20-B002601",
+                       "A9-B002299", "A10-B002299", "A11-B002299", "A12-B002299",
+                       "A13-B002299", "A14-B002299", "A15-B002299", "A16-B002299",
+                       "A17-B002299", "A18-B002299", "A19-B002299", "A20-B002299")
+
+base_quals.merge$Position <- paste(paste0(base_quals.merge$Row, base_quals.merge$Column),
+                                   base_quals.merge$PlateID,
+                                   sep="-")
+missing.wells <- unique(base_quals.merge$Position[is.na(base_quals.merge$Mean)])
+
+#sum(missing.wells %in% missing.minibulks)
+```
+
+```{r}
+jb.missing <- read.table("~/Dropbox/Thymus/Aging_experiment/JB_missingFiles.txt",
+                         h=TRUE, stringsAsFactors=FALSE, sep="\t")
+jb.missing$Position <- paste(jb.missing$Well,
+                             paste0("B00", jb.missing$PlateID),
+                             sep="-")
+#sum(jb.missing$Position %in% missing.wells)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=14.75, fig.width=9.75}
+by.plate <- ggplot(base_quals.merge, aes(x=Base, y=Mean)) + 
+  geom_boxplot() + theme_mike() +
+  theme(axis.text.x=element_blank()) +
+  labs(x="Base", y="Sequence Quality") +
+  facet_wrap(~PlateID, ncol=8)
+
+ggsave(by.plate,
+       filename="~/Dropbox/AgeingExperiment/QC/SequenceQuality_byPlate.png",
+       height=5.75, width=19.5, dpi=300)
+
+by.plate
+```
+
+Now we can start to see where the variability in sequence quality lies.  There a few libraries spread out across several 
+plates with much lower quality than the others.  It doesn't look however if there are any systematically bad or failed 
+plates which is reassuring.  There might be some problems with a dip in quality on plate `B002451`, and there are a 
+couple of plates with libraries that have completely failed (Q score < 10).
+
+### Base sequence quality by mouse age
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.75, fig.width=9.75}
+by.age <- ggplot(base_quals.merge, aes(x=Base, y=Mean)) + 
+  geom_boxplot() + theme_mike() +
+  theme(axis.text.x=element_blank()) +
+  labs(x="Base", y="Sequence Quality") +
+  facet_wrap(~Age, ncol=3)
+
+ggsave(by.age,
+       filename="~/Dropbox/AgeingExperiment/QC/SequenceQuality_byAge.png",
+       height=5.75, width=9.75, dpi=300)
+by.age
+```
+
+The libraries denoted '0' for age are the internal control wells, so they can be safely ignored.  The NA's refer to 
+some of the mini bulks and negative control wells..
+
+Generally speaking there aren't any specific issues by age that isn't explained by the plate effects seen above.
+
+### Base sequence quality by cell type
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.75, fig.width=9.75}
+by.celltype <- ggplot(base_quals.merge, aes(x=Base, y=Mean)) + 
+  geom_boxplot() + theme_mike() +
+  theme(axis.text.x=element_blank()) +
+  labs(x="Base", y="Sequence Quality") +
+  facet_wrap(~CellType, ncol=3)
+
+ggsave(by.celltype,
+       filename="~/Dropbox/AgeingExperiment/QC/SequenceQuality_byCell.png",
+       height=5.75, width=9.75, dpi=300)
+
+by.celltype
+```
+
+There does appear to be some sequenceable material in some of the negative control wells.  Whether this is due 
+to external contamination or sorting errors won't become evident until we start to do more extensive QC at the cellular 
+level. Otherwise there are no systematic sequence quality problems by cell type which is reassuring.
+
+## G+C content
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+gc_content <- read.table("~/CI_filesystem/mnt/nas2-data/jmlab/group_folders/morgan02/Thymus/FastQC_GCcontent.tsv.gz",
+                         sep="\t", h=TRUE, stringsAsFactors=FALSE)
+gc_content.melt <- melt(gc_content, id.vars='GC')
+gc_content.melt$variable <- as.character(gc_content.melt$variable)
+gc_content.melt$Metric <- unlist(lapply(strsplit(gc_content.melt$variable, split=".", fixed=T),
+                                        FUN=function(G) paste0(G[length(G)])))
+
+# exclude any spine plates that have crept in
+gc_content.melt <- gc_content.melt[!grepl(gc_content.melt$variable, pattern="ARA"), ]
+
+# parse the file name to get the relevant plate and position information
+file.parse <- strsplit(gc_content.melt$variable, split=".", fixed=T)
+file.pos <- unlist(lapply(file.parse, FUN=function(X) paste0(X[1])))
+file.plate <- unlist(lapply(file.parse, FUN=function(X) paste0(X[2])))
+file.row <- substr(file.pos, 0, 1)
+file.column <- as.numeric(substr(file.pos, 2, 3))
+
+gc_content.melt$PlateID <- file.plate
+gc_content.melt$Row <- file.row
+gc_content.melt$Column <- file.column
+
+#gc_content.melt$GC <- as.factor(gc_content.melt$GC)
+
+ggplot(gc_content.melt, aes(x=GC, y=value)) + 
+  theme_mike() +
+  stat_smooth() +
+  theme(axis.text.x=element_text(angle=90, size=10, vjust=0.5)) +
+  labs(x="GC Content", y="Density") +
+  scale_y_log10()
+```
+
+This line traces through the GC content of all ~23,000 FASTQ files.  Although it is hard to see, 
+there is a grey box around this fitted trend that represents a 95% confidence interval.  
+The y-axis is on a log scale, thus we can infer that the vast majority of reads in these libraries follow the 
+expected distribution of G+C content.  The exception is the small number of libraries with catastrophic failues denoted 
+by the sharp increase in reads with ~100% GC-content.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+gc_content.merge <- merge(gc_content.melt, plate.meta, by=c('PlateID', 'Row', 'Column'))
+```
+
+### Base sequence quality by plate ID
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=14.75, fig.width=9.75}
+by.plate <- ggplot(gc_content.merge, aes(x=GC, y=value)) + 
+  theme_mike() +
+  stat_smooth() +
+  theme(axis.text.x=element_text(angle=90, size=10, vjust=0.5)) +
+  labs(x="GC Content", y="Density") +
+  scale_y_log10() +
+  facet_wrap(~PlateID, ncol=4)
+
+by.plate
+```
+
+There isn't much variability between the different plates, but they are all marked by the upward trend of reads with 100% 
+GC content.  This is therefore probably due to one of the wells consistent to a plate, for instance the internal controls 
+or empty wells.
+
+### Base sequence quality by mouse age
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.75, fig.width=9.75}
+by.age <- ggplot(gc_content.merge, aes(x=GC, y=value)) + 
+  theme_mike() +
+  stat_smooth() +
+  theme(axis.text.x=element_text(angle=90, size=10, vjust=0.5)) +
+  labs(x="GC Content", y="Density") +
+  scale_y_log10()  +
+  facet_wrap(~Age, ncol=3)
+
+by.age
+```
+
+The libraries denoted '0' for age are the internal control wells, so they can be safely ignored .  These have a very flat 
+distribution of G+C content indicating a more uniform coverage of this GC% range.  These are not the libraries that are 
+the cause of the 100% G+C content however.
+
+
+### Base sequence quality by cell type
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.75, fig.width=9.75}
+by.celltype <- ggplot(gc_content.merge, aes(x=GC, y=value)) + 
+  theme_mike() +
+  stat_smooth() +
+  theme(axis.text.x=element_text(angle=90, size=10, vjust=0.5)) +
+  labs(x="GC Content", y="Density") +
+  scale_y_log10()  +
+  facet_wrap(~CellType, ncol=3)
+
+by.celltype
+```
+
+Likewise we can see that neither the internal nor the negative control wells are the source of the reads with 100% G+C 
+content.  This looks like it is something more universal to the library preparations or sequencing.
+
+Overall the G+C content is distributed as expected.  The only exception is the enrichment for reads which have ~100% 
+G+C content, which is quite strange.  This might be due to an external contaminating agent, or a catastrophic failure 
+in base calling for some reads.  If I recall the Nova-seq chemistry uses two colour chemistry to discriminate between 
+the 4 possible nucleotides, i.e. red = C, green = T, both red and green = A, and complete absence = G.  
+Therefore, reads with all N's (i.e. uncalled bases), are potentially indistinguishable from runs of all G's, and 
+reads that contain all N's actually show up as all G's.
+
+## Nucleotide content
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+nuc_content <- read.table("~/CI_filesystem/mnt/nas2-data/jmlab/group_folders/morgan02/Thymus/FastQC_NucContent.tsv.gz",
+                         sep="\t", h=TRUE, stringsAsFactors=FALSE)
+
+nuc_content$Base <- factor(nuc_content$Base,
+                           levels=c("1", "2", "3", "4", "5", "6", "7", "8", "9", "10-11", "12-13",
+                                    "14-15", "16-17", "18-19", "20-21", "22-23", "24-25", "26-27",
+                                    "28-29", "30-31", "32-33", "34-35", "36-37", "38-39", "40-41",
+                                    "42-43", "44-45", "46-47", "48-49", "50-51", "52-53", "54-55",
+                                    "56-57", "58-59", "60-61", "62-63", "64-65", "66-67", "68-69",
+                                    "70-71", "72-73", "74-75", "76-77", "78-79", "80-81", "82-83",
+                                    "84-85", "86-87", "88-89", "90-91", "92-93", "94-95", "96-97",
+                                    "98-99", "100"),
+                           labels=c("1", "2", "3", "4", "5", "6", "7", "8", "9", "10-11", "12-13",
+                                    "14-15", "16-17", "18-19", "20-21", "22-23", "24-25", "26-27",
+                                    "28-29", "30-31", "32-33", "34-35", "36-37", "38-39", "40-41",
+                                    "42-43", "44-45", "46-47", "48-49", "50-51", "52-53", "54-55",
+                                    "56-57", "58-59", "60-61", "62-63", "64-65", "66-67", "68-69",
+                                    "70-71", "72-73", "74-75", "76-77", "78-79", "80-81", "82-83",
+                                    "84-85", "86-87", "88-89", "90-91", "92-93", "94-95", "96-97",
+                                    "98-99", "100"))
+
+
+# parse the file name to get the relevant plate and position information
+file.parse <- strsplit(nuc_content$FileName, split="-", fixed=T)
+file.pos <- unlist(lapply(file.parse, FUN=function(X) paste0(X[1])))
+file.plate <- unlist(lapply(file.parse, FUN=function(X) paste0(X[2])))
+file.row <- substr(file.pos, 0, 1)
+file.column <- as.numeric(substr(file.pos, 2, 3))
+
+nuc_content$PlateID <- file.plate
+nuc_content$Row <- file.row
+nuc_content$Column <- file.column
+
+ggplot(nuc_content, aes(x=Base, y=value, group=variable, colour=variable)) + 
+  theme_mike() +
+  stat_smooth() +
+  scale_colour_brewer(palette="Dark2") +
+  theme(axis.text.x=element_text(angle=90, size=10, vjust=0.5)) +
+  labs(x="Base", y="Nucleotide Proportion") +
+  lims(y=c(0, 50))
+```
+
+Each line represents the percentage of each read base position for each of the four nucleotides present across all 
+FASTQ files.  As with the G+C content there is also a very small 95% confidence interval around each smoothed fit.
+There is always a lot of variability in nucleotide content in the first 10 or so bases.  After this the proportions 
+should average out around 25% for each representative nucleotide.  This is a good sign that the libraries were well 
+balanced with respect to base-composition and nucleotide complexity.
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+nuc_content.merge <- merge(nuc_content, plate.meta, by=c('PlateID', 'Row', 'Column'))
+```
+
+### Nucleotide content by plate ID
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=14.75, fig.width=9.75}
+by.plate <- ggplot(nuc_content.merge, aes(x=Base, y=value, group=variable, colour=variable)) + 
+  theme_mike() +
+  stat_smooth() +
+  scale_colour_brewer(palette="Dark2") +
+  theme(axis.text.x=element_blank()) +
+  labs(x="Base", y="Nucleotide Proportion") +
+  lims(y=c(0, 50)) +
+  facet_wrap(~PlateID, ncol=3)
+
+by.plate
+```
+
+There isn't much variability between the different plates, for the most part.  A couple of plates stand out, but this 
+might just be due to smaller numbers of libraries on these plates.
+
+### Nucleotide content by mouse age
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.75, fig.width=9.75}
+by.age <- ggplot(nuc_content.merge, aes(x=Base, y=value, group=variable, colour=variable)) + 
+  theme_mike() +
+  stat_smooth() +
+  scale_colour_brewer(palette="Dark2") +
+  theme(axis.text.x=element_text(angle=90, size=10, vjust=0.5)) +
+  labs(x="Base", y="Nucleotide Proportion") +
+  lims(y=c(0, 50)) +
+  facet_wrap(~Age, ncol=3)
+
+by.age
+```
+
+The libraries denoted '0' for age are the internal control wells, and the NA's represent the negative controls so they 
+can be safely ignored.  The other age-related differences are pretty negligible.
+
+
+### Nucleotide content by cell type
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.75, fig.width=9.75}
+by.celltype <- ggplot(nuc_content.merge, aes(x=Base, y=value, group=variable, colour=variable)) + 
+  theme_mike() +
+  stat_smooth() +
+  scale_colour_brewer(palette="Dark2") +
+  theme(axis.text.x=element_text(angle=90, size=10, vjust=0.5)) +
+  labs(x="Base", y="Nucleotide Proportion") +
+  lims(y=c(0, 50)) +
+  facet_wrap(~CellType, ncol=3)
+
+by.celltype
+```
+
+Once again the control libaries can be ignored.  Whilst there is some material in the negative control wells, it is more 
+variable in nucleotide content than the others.  This might just be due to the smaller numbers of wells/libraries though.
+
+## Overrepresented sequences
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.75, fig.width=11.75}
+overrep_seq <- read.table("~/CI_filesystem/mnt/nas2-data/jmlab/group_folders/morgan02/Thymus/FastQC_OverRep.tsv.gz",
+                         sep="\t", h=TRUE, stringsAsFactors=FALSE)
+
+# chop out the % over bp range informaiton to collapse down
+overrep_seq$Source <- unlist(lapply(strsplit(overrep_seq$Possible.Source,
+                                             split="(", fixed=TRUE),
+                                    FUN=function(G) paste0(G[1])))
+
+
+# parse the file name to get the relevant plate and position information
+# file.parse <- strsplit(overrep_seq$FileName, split="-", fixed=T)
+# file.pos <- unlist(lapply(file.parse, FUN=function(X) paste0(X[1])))
+# file.plate <- unlist(lapply(file.parse, FUN=function(X) paste0(X[2])))
+# file.row <- substr(file.pos, 0, 1)
+# file.column <- as.numeric(substr(file.pos, 2, 3))
+# 
+# overrep_seq$PlateID <- file.plate
+# overrep_seq$Row <- file.row
+# overrep_seq$Column <- file.column
+
+ggplot(overrep_seq[overrep_seq$Source != "No Hit",],
+       aes(x=Source, y=Count)) +
+  geom_boxplot() +
+  theme_minimal() +
+  theme(axis.text.x=element_text(angle=90, size=10, vjust=0.5)) +
+  labs(x="Overrepresented Sequence", y="Count") +
+  scale_y_log10()
+```
+
+I haven't recorded the overrepresented sequences by different conditions yet, so this is just a summary of all libraries. 
+There are a lot of known over represented sequences across all ~23K FASTQ files.  As expected these are primarily from 
+the library preparation steps, and will be removed during the read trimming stages.
+
+
+## Sequence duplication
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+sequence_dup <- read.table("~/CI_filesystem/mnt/nas2-data/jmlab/group_folders/morgan02/Thymus/FastQC_Duplicates.tsv.gz",
+                         sep="\t", h=TRUE, stringsAsFactors=FALSE)
+
+# dump the duplication level rows
+sequence_dup <- sequence_dup[!grepl(sequence_dup$variable, pattern="Level"), ]
+
+sequence_dup$DupLevel <- factor(sequence_dup$DupLevel,
+                                levels=c("1", "2", "3", "4", "5", "6", "7", "8", "9", 
+                                         ">10", ">50", ">100", ">500", ">1k", ">5k", ">10k+"),
+                                labels=c("1", "2", "3", "4", "5", "6", "7", "8", "9", 
+                                         ">10", ">50", ">100", ">500", ">1k", ">5k", ">10k+"))
+
+# parse the file name to get the relevant plate and position information
+file.parse <- strsplit(sequence_dup$variable, split="-", fixed=T)
+file.pos <- unlist(lapply(file.parse, FUN=function(X) paste0(X[1])))
+file.plate <- unlist(lapply(file.parse, FUN=function(X) paste0(X[2])))
+file.row <- substr(file.pos, 0, 1)
+file.column <- as.numeric(substr(file.pos, 2, 3))
+
+sequence_dup$PlateID <- file.plate
+sequence_dup$Row <- file.row
+sequence_dup$Column <- file.column
+
+sequence_dup$value <- as.numeric(sequence_dup$value)
+
+ggplot(sequence_dup[grepl(sequence_dup$variable, pattern="total"), ],
+       aes(x=DupLevel, y=value, group=variable)) +
+  geom_line() +
+  theme_minimal() +
+  theme(axis.text.x=element_text(angle=90, size=10, vjust=0.5)) +
+  labs(x="Duplicates", y="% of total reads")
+```
+
+The proportion of reads in each FASTQ file are presented on the y-axis, and the number of reads that fall into the 
+different duplication categories are shown along the x-axis.  The vast majority of reads are only present a single time 
+in any given FASTQ file and a long tail of reads that are multiple duplicates.
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+sequence_dup.merge <- merge(sequence_dup, plate.meta, by=c('PlateID', 'Row', 'Column'))
+```
+
+### Sequence duplication by plate ID
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=14.75, fig.width=9.75}
+by.plate <- ggplot(sequence_dup.merge[grepl(sequence_dup.merge$variable, pattern="total"), ],
+       aes(x=DupLevel, y=value, group=variable)) +
+  geom_line() +
+  theme_minimal() +
+  theme(axis.text.x=element_text(angle=90, size=10, vjust=0.5)) +
+  labs(x="Duplicates", y="% of total reads") +
+  facet_wrap(~PlateID, ncol=3)
+
+by.plate
+```
+
+The patterns of duplication look pretty similar across plates, so there aren't any specific plates that appear to be 
+problematic at this stage.
+
+### Sequence duplication by mouse age
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.75, fig.width=9.75}
+by.age <- ggplot(sequence_dup.merge[grepl(sequence_dup.merge$variable, pattern="total"), ],
+       aes(x=DupLevel, y=value, group=variable)) +
+  geom_line() +
+  theme_minimal() +
+  theme(axis.text.x=element_text(angle=90, size=10, vjust=0.5)) +
+  labs(x="Duplicates", y="% of total reads") +
+  facet_wrap(~Age, ncol=3)
+
+by.age
+```
+
+The libraries denoted '0' for age are the internal control wells, and the NA's represent the negative controls so they 
+can be safely ignored.  The other age-related differences are pretty negligible as with the other metrics, which is 
+reassuring.
+
+### Sequence duplication by cell type
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.75, fig.width=9.75}
+by.celltype <- ggplot(sequence_dup.merge[grepl(sequence_dup.merge$variable, pattern="total"), ],
+       aes(x=DupLevel, y=value, group=variable)) +
+  geom_line() +
+  theme_minimal() +
+  theme(axis.text.x=element_text(angle=90, size=10, vjust=0.5)) +
+  labs(x="Duplicates", y="% of total reads") +
+  facet_wrap(~CellType, ncol=3)
+
+by.celltype
+```
+
+Once again the control libaries can be ignored.  Whilst there is some material in the negative control wells, it doesn't 
+necessarily have any more diplication level than the other libraries.  I think this might be contamination from other 
+genuine cell/minibulk wells.
+
+Finally, how does the sequencing depth look for each plate, cell type and age condition?
+
+## Sequencing depth
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+seq_depth <- read.table("~/CI_filesystem/mnt/nas2-data/jmlab/group_folders/morgan02/Thymus/FastQC_SeqDepth.tsv.gz",
+                        sep="\t", stringsAsFactors=FALSE, h=TRUE)
+
+# remove the spine libraries that made it in
+seq_depth <- seq_depth[!grepl(seq_depth$sample, pattern="ARA"), ]
+
+# parse the file name to get the relevant plate and position information
+file.parse <- strsplit(seq_depth$sample, split="-", fixed=T)
+file.pos <- unlist(lapply(file.parse, FUN=function(X) paste0(X[1])))
+file.plate <- unlist(lapply(file.parse, FUN=function(X) paste0(X[2])))
+file.row <- substr(file.pos, 0, 1)
+file.column <- as.numeric(substr(file.pos, 2, 3))
+
+seq_depth$PlateID <- file.plate
+seq_depth$Row <- file.row
+seq_depth$Column <- file.column
+
+ggplot(seq_depth, aes(x=tot.seq)) +
+  geom_histogram(colour="black", binwidth=0.1) +
+  theme_mike() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(x="Total number of reads", y="Frequency")
+```
+
+The sequencing depth ranges from 1 read (probably failed libraries or negative control wells) to ~ 100M reads (mini bulk 
+perhaps?).  The greatest mass of points lies 100K-1M range, which would be the ideal target range for SMART-seq2 
+(single-cell) libraries.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+seq_depth.merge <- merge(seq_depth, plate.meta, by=c('PlateID', 'Row', 'Column'))
+```
+
+### Sequencing depth by plate ID
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=14.75, fig.width=9.75}
+by.plate <- ggplot(seq_depth.merge, aes(x=tot.seq)) +
+  geom_histogram(colour="black", binwidth=0.1) +
+  theme_mike() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(x="Total number of reads", y="Frequency") +
+  facet_wrap(~PlateID, ncol=8)
+
+ggsave(by.plate,
+       filename="~/Dropbox/AgeingExperiment/QC/LibrarySize_byPlate.png",
+       height=5.75, width=19.5, dpi=300)
+
+by.plate
+```
+
+There's a bit of variability between plates, which for libraries with < $10^4$ reads is a reflection of a poor quality or 
+failed cell.  Some of the plates have a bimodal distribution of reads, which doesn't have an immediate interpretation 
+beyond greater RNA content or differences in how libraries were balanced on the Nova-seq.
+
+### Sequencing depth by mouse age
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.75, fig.width=9.75}
+by.age <- ggplot(seq_depth.merge, aes(x=tot.seq)) +
+  geom_histogram(colour="black", binwidth=0.1) +
+  theme_mike() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(x="Total number of reads", y="Frequency") +
+  facet_wrap(~Age, ncol=3)
+
+ggsave(by.age,
+       filename="~/Dropbox/AgeingExperiment/QC/LibrarySize_byAge.png",
+       height=5.75, width=9.75, dpi=300)
+
+by.age
+```
+
+The sequencing depth distribution is pretty consistent between the different ages, this is good, there probably 
+aren't going to be any systematic differences in sequencing depth for this important variable.
+
+### Sequencing depth by cell type
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.75, fig.width=7.75}
+by.celltype <- ggplot(seq_depth.merge, aes(x=tot.seq)) +
+  geom_histogram(colour="black", binwidth=0.1) +
+  theme_mike() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(x="Total number of reads", y="Frequency")+
+  facet_wrap(~CellType, ncol=3)
+
+ggsave(by.celltype,
+       filename="~/Dropbox/AgeingExperiment/QC/LibrarySize_byCell.png",
+       height=5.75, width=9.75, dpi=300)
+
+by.celltype
+```
+
+Finally by cell type, we see that these distributions are very similar which is encouraging.
+
+# Conclusions
+
+Overall the sequence quality by these metrics looks pretty good.  For the most part the duplication rates, contaminating 
+sequences (i.e. primers and adaptors) are within the ranges for many other SMART-seq2 data sets.
+
+My only reservation, at the moment, is that there are quite a few libraries with low coverage, i.e < 100K reads, which 
+will reduce the total number of cells for analysis.  We'll know for sure once the alignment, deduplication and gene 
+expression quantification is completed.
+
+
+
+
+

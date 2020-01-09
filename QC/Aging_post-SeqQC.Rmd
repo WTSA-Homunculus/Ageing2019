@@ -1,0 +1,1509 @@
+---
+title: "Thymus Aging: Post-sequencing Analysis"
+output: html_notebook
+author: "Mike Morgan"
+---
+
+# Introduction
+
+Following the initial sequencing QC, it appears that there are two principal issues.  The first is that the minibulk samples consistently fail during 
+pipeline execution.  The exact reason is not 100% clear, but it might involve issues related to Andy May's email regarding failures in their processing 
+and sequencing pipeline.  The row A fastq files that we have received are almost entirely empty after adaptor removal and low quality base trimming.
+
+The second issue, which Jeanette has identified, is that ~50% of plate wells are dominated by ERCC92 spike in RNA, i.e. all of the sequencing reads are 
+attributable to the spike ins.  This is usually an indication that there was no viable cell in a well.
+
+I'll corroborate how many viable and useable cells remain, what the principal sources of variation are, and examine the possibility of batch effects.  
+The principal aim of this report is to gauge how much data can be salvaged, and what inferrence we can draw from these data.
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+library(scran)
+library(scater)
+library(SingleCellExperiment)
+library(ggplot2)
+library(reshape2)
+library(scales)
+library(pheatmap)
+library(igraph)
+library(cowplot)
+library(biomaRt)
+library(fpc)
+library(viridis)
+source("~/Dropbox/R_sessions/GGMike/theme_mike.R")
+source("~/Dropbox/R_sessions/SingleCellFunctions/single_cell_functions.R")
+
+thymus.counts <- read.table("~/Dropbox/AgeingExperiment/Merged_counts.txt.gz",
+                            sep="\t", h=TRUE, stringsAsFactors=FALSE)
+rownames(thymus.counts) <- thymus.counts$Geneid
+
+thymus.meta <- read.table("~/Dropbox/Thymus/Aging_experiment/Theoretical_meta_data.txt",
+                          sep="\t", h=TRUE, stringsAsFactors=FALSE)
+thymus.meta$Position <- paste0(thymus.meta$Row, thymus.meta$Column)
+
+# construct mapping between counts matrix and meta data
+cell.ids <- colnames(thymus.counts[, 7:ncol(thymus.counts)])
+position <- unlist(lapply(strsplit(cell.ids, split=".", fixed=T),
+                          FUN=function(Z) paste0(Z[1])))
+plate <- unlist(lapply(strsplit(cell.ids, split=".", fixed=T),
+                       FUN=function(Z) paste0(Z[2])))
+match.meta <- do.call(cbind.data.frame,
+                      list("Sample"=cell.ids,
+                           "PlateID"=plate,
+                           "Position"=position))
+
+thymus.meta <- merge(thymus.meta, match.meta, by=c('Position', 'PlateID'))
+# set the age ordering
+thymus.meta$Age <- factor(thymus.meta$Age,
+                          levels=c("1wk", "4wk", "16wk", "32wk", "52wk"),
+                          labels=c("1wk", "4wk", "16wk", "32wk", "52wk"))
+
+all.genes <- thymus.counts$Geneid
+ensembl <- useEnsembl(biomart='ensembl', dataset='mmusculus_gene_ensembl', GRCh=37)
+gene_symbol <- getBM(attributes=c('ensembl_gene_id', 'external_gene_name'),
+                     filters='ensembl_gene_id', mart=ensembl,
+                     values=all.genes)
+rownames(gene_symbol) <- gene_symbol$ensembl_gene_id
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+cluster.cols <-  c("#9970ab", "#35978f", "#B0cdc1", "#762a83", "#01665e", "#e7d4e8", "#dfc27d", "#8c510a" ,"#bf812d")
+names(cluster.cols) <- c("1", "2", "3", "5", "6", "7", "8", "9", "10")
+
+age.cols <- viridis(option="magma", n=5)
+names(age.cols) <- c("1wk", "4wk", "16wk", "32wk", "52wk")
+
+cell.cols <- c("#f2a242", "#ed7a75", "#6ab2f9", "#b4b8b7")
+names(cell.cols) <- c("cTEC", "mTEClo", "mTEChi", "gmTEC")
+```
+
+# Quality Control
+
+There are a couple of things worth looking at for the post-sequencing QC.
+
+* Total read depth - we want to aim for at least 100K reads per cell, as an absolute minimum
+* ERCC spike in % - Jeanette has already identified a problem, we can keep cells with <= 50% spike ins
+* Sparse cells - these are cells with generally very low coverage, or where the total expression is dominated by just a few genes
+* Sparse genes - for the purpose of normalization we want to remove genes with lots of 0's so we get accurate normalization factor estimates.
+
+Each of these filtering steps will be carried out separately, and only the cells that pass all 4 filters will be used for normalization.
+
+First plot the distribution of total read counts (on a log$_10$ scale) .
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# remove cells with <50K total read counts
+# remove cells with >50% ERCC spike in
+# remove cells with > 95% 0's
+# remove genes with > 95% 0's
+total.counts <- colSums(thymus.counts[, 7:ncol(thymus.counts)])
+hist(log10(total.counts), 100)
+```
+
+We can see that most cells are clustered around a log$_10$ total count of 5, which is 100K reads.  This falls off sharply as we get down to a 10K 
+reads.  I think keeping cells with >= 100K total counts should be sufficient.  There is also a second peak of cells with ~1M reads, which would be the 
+ideal sequencing depth for single cells.  Keeping just the cells with >= 50K reads gives us `r sum(total.counts >= 100000)` useable wells.
+
+Now for the % ERCC.  This is how much of the total expression counts is attributable to ERCC spike in RNA.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ercc.counts.total <-  colSums(thymus.counts[grepl(rownames(thymus.counts), pattern="ERCC"), 7:ncol(thymus.counts)])
+
+ercc.prop <- (ercc.counts.total/colSums(thymus.counts[, 7:ncol(thymus.counts)])) * 100
+# if an ercc total count is 0, the this will give an NA
+ercc.prop[is.na(ercc.prop)] <- 0
+png("~/Dropbox/AgeingExperiment/QC/ERCC_histogram.png", 
+    height=3.75, width=4.75, res=300, units="in")
+hist(ercc.prop, 100, main=NULL, xlab="% ERCC")
+abline(v=40, col='purple', lty=2)
+dev.off()
+
+hist(ercc.prop, 100, main=NULL, xlab="% ERCC")
+abline(v=40, col='purple', lty=2)
+```
+
+This confirms Jeanette's finding that there are ~40% of wells which are dominated by the ERCC spike in RNA (peak on the right).  The remaining wells 
+range from 0, with a long tail of increasing ERCC %.  These are the useable wells  If we set a hard threshold at 40% (purple line), then we will have no more than `r sum(ercc.prop <= 40)` useable wells in total.
+
+How well covered are these wells?  Let's look at the % 0's for each well.  I'll exclude the ERCC spike in genes for this purpose.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+n.cells <- ncol(thymus.counts) - 7
+n.genes <- dim(thymus.counts)[1]
+
+cell_sparsity <- apply(thymus.counts[!grepl(rownames(thymus.counts), pattern="ERCC"), 7:ncol(thymus.counts)] == 0, 2, sum)/n.genes
+
+# if an ercc total count is 0, the this will give an NA
+hist(cell_sparsity, 100)
+abline(v=0.99, col='purple', lty=2)
+```
+
+There are a large number of wells with >99% 0's, this is most likely driven by those that contain ~100% spike in transcripts.
+
+Using these three summary measures, let's see how many cells remain and what sample type, plates, age and cell types they correspond to.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+remove.ercc <- cell.ids[ercc.prop > 40]
+remove.libsize <- cell.ids[total.counts < 100000]
+remove.sparse <- cell.ids[cell_sparsity > 0.97]
+any.fail <- unique(c(remove.ercc, remove.libsize, remove.sparse))
+
+thymus.meta$QCFail <- "No"
+thymus.meta$QCFail[thymus.meta$Sample %in% any.fail] <- "Yes"
+
+thymus.meta$QCFailReason <- "Pass"
+thymus.meta$QCFailReason[thymus.meta$Sample %in% unique(c(remove.sparse, remove.libsize))] <- "Sparse/LibSize"
+thymus.meta$QCFailReason[thymus.meta$Sample %in% unique(c(remove.libsize, remove.ercc))] <- "LibSize/ERCC"
+thymus.meta$QCFailReason[thymus.meta$Sample %in% unique(c(remove.sparse, remove.ercc))] <- "Sparse/ERCC"
+thymus.meta$QCFailReason[thymus.meta$Sample %in% setdiff(remove.ercc, unique(c(remove.sparse, remove.libsize)))] <- "ERCC"
+thymus.meta$QCFailReason[thymus.meta$Sample %in% setdiff(remove.libsize, unique(c(remove.sparse, remove.ercc)))] <- "LibSize"
+thymus.meta$QCFailReason[thymus.meta$Sample %in% setdiff(remove.sparse, unique(c(remove.ercc, remove.libsize)))] <- "Sparse"
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta,
+       aes(x=QCFail, fill=PlateID)) +
+  geom_bar(position='dodge') +
+  theme_mike() +
+  geom_hline(mapping=aes(yintercept=372), colour='black', lty=2) +
+  scale_fill_Publication()
+```
+
+The horizontal dashed line is set to 372 (i.e. 384 - the number of internal and negative control wells).  We can also look at what the reasons for these QC fails are.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+fail.reason <- ggplot(thymus.meta,
+       aes(x=QCFail, fill=QCFailReason)) +
+  geom_bar(position='dodge') +
+  theme_mike() +
+  scale_fill_Publication() +
+  guides(fill=guide_legend(ncol=2))
+
+ggsave(fail.reason,
+       filename="~/Dropbox/AgeingExperiment/QC/Failure_reason.png",
+       height=4.25, width=5.25, dpi=300)
+fail.reason
+```
+
+So the vast majority of QC failures are due to the ERCC issue (coupled with sparsity).  In total `r table(thymus.meta$QCFail)[1]` cells remain useable 
+for normalization based on these QC thresholds.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta,
+       aes(x=QCFailReason, fill=SortType)) +
+  geom_bar(position='dodge') +
+  theme_mike() +
+  scale_fill_Publication()
+```
+
+There aren't any minibulk samples, as these all systematically failed sequencing QC, or failed to pass through the complete pipeline.  The majority of 
+these failures are due to a lack of viable sequencing reads.
+
+Let's breakdown the remaining cells into cell type and ages to see if there are going to be any major issues for the downstream analysis.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta,
+       aes(x=CellType, fill=QCFailReason)) +
+  geom_bar(position='dodge') +
+  theme_mike() +
+  scale_fill_Publication()
+```
+
+The proportions seems very similar across the 4 cell types, so there's nothing systematic here thankfully.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta,
+       aes(x=Age, fill=QCFailReason)) +
+  geom_bar(position='dodge') +
+  theme_mike() +
+  scale_fill_Publication()
+```
+
+Likewise the QC failures are generally evenly spread across the ages.  The possible exceptions are weeks 1 and 16 which seem to have ~500 fewer cells 
+in total than the other time points.  What we really want to know however, is how many actual cells do we have for downstream analysis.  Jeanette has 
+circulated a plot from her QC, so I expect these numbers to be very similar.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.25, fig.width=4.25}
+tab.pass <- as.data.frame(table(thymus.meta[thymus.meta$QCFail == "No",]$Age,
+                                thymus.meta[thymus.meta$QCFail == "No",]$CellType))
+
+write.table(thymus.meta,
+            file="~/Dropbox/AgeingExperiment/Meta_preQC.tsv",
+            sep="\t", quote=FALSE, row.names=FALSE)
+
+pass.table.p <- ggplot(tab.pass,
+       aes(x=Var2, y=Var1)) +
+  geom_tile(aes(fill=Freq)) +
+  geom_text(aes(label=Freq), colour='white') +
+  theme_mike() +
+  labs(x="Cell Type", y="Age")
+
+ggsave(pass.table.p,
+       filename="~/Dropbox/AgeingExperiment/QC/Table_pass.png",
+       height=3.75, width=3.75, dpi=300)
+
+pass.table.p
+```
+
+# Normalization
+
+Prior to normalization I'll filter out the genes that are really sparsely expressed.  We can come back to these genes at a later time for the analysis 
+of pGE, but for the purposes of normalization these need to be removed.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+keep.cells <- as.character(thymus.meta[thymus.meta$QCFail == "No",]$Sample)
+counts.pass <- thymus.counts[, keep.cells]
+
+gene_sparsity <- apply(counts.pass == 0, 1, sum)/dim(counts.pass)[2]
+hist(gene_sparsity, 100)
+abline(v=0.95, lty=2, col='purple')
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+set.seed(42)
+thymus.size_factors <- get_size_factors(counts.pass, 
+                                        cell.sparse=0.97, gene.sparse=0.95, 
+                                        cluster.size=150, use.spikes=TRUE)
+# merge with the meta data
+thymus.size_factors$Sample <- as.character(thymus.size_factors$Sample)
+thymus.meta$Sample <- as.character(thymus.meta$Sample)
+
+meta.size_factor <- merge(thymus.meta, thymus.size_factors, by='Sample')
+hist(thymus.size_factors$SumFactor, 100)
+```
+
+Most of the size factors are quite small, there are a couple of negatve size factors; these cells will need to be removed before normalization.  It's also worth 
+calculating the spike-in estimated size factors, these might be quite useful for controlling RNA content differences.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+set.seed(42)
+thymus.spike_factors <- get_spike_factors(counts.pass, 
+                                          cell.sparse=0.97, gene.sparse=0.95, 
+                                          cluster.size=150, use.spikes=TRUE)
+# merge with the meta data
+thymus.spike_factors$Sample <- as.character(thymus.spike_factors$Sample)
+thymus.meta$Sample <- as.character(thymus.meta$Sample)
+
+meta.size_factor <- merge(meta.size_factor, thymus.spike_factors, by='Sample')
+hist(thymus.spike_factors$SpikeFactor, 100)
+```
+
+The spike-in estimated size factors look quite strongly correlated with the size factors estimated from the endogenous genes.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+plot(thymus.spike_factors$SpikeFactor, colSums(counts.pass[, thymus.spike_factors$Sample]))
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+plot(thymus.size_factors$SumFactor, colSums(counts.pass[, thymus.size_factors$Sample]))
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+neg.factors <- as.character(thymus.size_factors$Sample)[thymus.size_factors$SumFactor < 0]
+
+thymus.sf_norm <- size_factor_normalize(counts.pass[, !colnames(counts.pass) %in% neg.factors], 
+                                        cell.sparse=0.97, gene.sparse=0.98, 
+                                        cluster.size=150, use.spikes=TRUE)
+# reset any NA values to 0
+thymus.sf_norm[is.na(thymus.sf_norm)] <- 0
+
+# some cells are duplicated once ERCCs are removed - get rid of these (not sure why they're duplicates)
+ercc.genes <- grepl(thymus.sf_norm$gene_id, pattern="ERCC-")
+duplicated.cells <- colnames(thymus.sf_norm)[duplicated(t(thymus.sf_norm[!ercc.genes, -ncol(thymus.sf_norm)]))]
+thymus.sf_norm <- thymus.sf_norm[, setdiff(colnames(thymus.sf_norm), duplicated.cells)]
+
+write.table(thymus.sf_norm,
+            file=gzfile("~/Dropbox/AgeingExperiment/ThymusQC_SFnorm.tsv.gz"),
+            sep="\t", quote=FALSE, row.names=FALSE)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+neg.factors <- as.character(thymus.size_factors$Sample)[thymus.size_factors$SumFactor < 0]
+
+thymus.sf_norm <- size_factor_normalize(counts.pass[, !colnames(counts.pass) %in% neg.factors], 
+                                        cell.sparse=0.97, gene.sparse=0.98, 
+                                        cluster.size=150, use.spikes=FALSE)
+# reset any NA values to 0
+thymus.sf_norm[is.na(thymus.sf_norm)] <- 0
+
+# some cells are duplicated once ERCCs are removed - get rid of these (not sure why they're duplicates)
+ercc.genes <- grepl(thymus.sf_norm$gene_id, pattern="ERCC-")
+duplicated.cells <- colnames(thymus.sf_norm)[duplicated(t(thymus.sf_norm[!ercc.genes, -ncol(thymus.sf_norm)]))]
+thymus.sf_norm <- thymus.sf_norm[, setdiff(colnames(thymus.sf_norm), duplicated.cells)]
+
+write.table(thymus.sf_norm,
+            file=gzfile("~/Dropbox/AgeingExperiment/ThymusQC_SumFactorNorm.tsv.gz"),
+            sep="\t", quote=FALSE, row.names=FALSE)
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# normalize based on the spike factors
+# remove the all 0 rows, these are utterly superfluous
+drop.genes <- apply(counts.pass > 0, 1, sum) < 5
+spike.norm <- log2((counts.pass[!drop.genes, !colnames(counts.pass) %in% neg.factors]/
+                      thymus.spike_factors$SpikeFactor[!thymus.spike_factors$Sample %in% neg.factors]) + 1)
+
+# remove the ERCC genes
+spike.norm <- spike.norm[!grepl(rownames(spike.norm), pattern="ERCC-"),]
+spike.norm$gene_id <- rownames(spike.norm)
+spike.norm <- spike.norm[, colnames(spike.norm) %in% colnames(thymus.sf_norm)]
+
+write.table(spike.norm,
+            file=gzfile("~/Dropbox/AgeingExperiment/ThymusQC_SpikeNorm-ALL.tsv.gz"),
+            sep="\t", quote=FALSE, row.names=FALSE)
+```
+
+We also need a larger set of genes to study promiscuous gene expression, so I'll apply these estimated spike-in size factors to the whole matrix 
+of genes too.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# remove the all 0 rows, these are utterly superfluous
+drop.genes <- apply(counts.pass > 0, 1, sum) < 5
+all.norm <- as.data.frame(t(apply(counts.pass[!drop.genes, ], 1,
+                                  FUN=function(X) log2((X/thymus.size_factors$SumFactor) + 1))))
+
+# remove the ERCC genes
+all.norm <- all.norm[!grepl(rownames(all.norm), pattern="ERCC-"), ]
+all.norm$gene_id <- rownames(all.norm)
+all.norm <- all.norm[, colnames(all.norm) %in% colnames(thymus.sf_norm)]
+
+write.table(all.norm,
+            file=gzfile("~/Dropbox/AgeingExperiment/ThymusQC_SFnorm-ALL.tsv.gz"),
+            sep="\t", quote=FALSE, row.names=FALSE)
+```
+
+This QC'd data set with normalized expression contains `r dim(thymus.sf_norm)[2]` cell and `r dim(thymus.sf_norm)[1]` genes. 
+The final design looks thus:
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+finall.cells <- colnames(thymus.sf_norm)[1:(dim(thymus.sf_norm)[2]-1)]
+
+tab.final <- as.data.frame(table(thymus.meta[thymus.meta$Sample %in%  finall.cells,]$Age,
+                                 thymus.meta[thymus.meta$Sample %in%  finall.cells,]$CellType))
+
+ggplot(tab.final,
+       aes(x=Var2, y=Var1)) +
+  geom_tile(aes(fill=Freq)) +
+  geom_text(aes(label=Freq), colour='white') +
+  theme_mike() +
+  labs(x="Cell Type", y="Age")
+```
+
+# Dimensionality reduction and visualisation
+
+The experimental design, with ages and cell types mixed across plates, aimed to reduce the potential impact of batch effects.  To that end, let's 
+see to what extent batch effects are present, and what the major axes of variation are between cells.
+
+## Highly variable genes
+
+In order to reduce the computational burden and increase the signal:noise ratio for clustering and visualisation, it is commmon to select a set of 
+genes that informative of the underlying bioligy.  This can be achieved in an unsupervised manner by selecting genes that are highly variable across 
+single cells.  These genes are often very good at representing any structured heterogeneity in single cell data, whether that is due to biological, 
+technical or experimental reasons.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# remove the ERCC genes from this
+thymus.hvg <- find_hvg(thymus.sf_norm[!ercc.genes, -ncol(thymus.sf_norm)], 
+                       p.threshold=1e-5, return.ranks=TRUE)
+hvg.genes <- as.character(thymus.hvg$gene_id)[thymus.hvg$HVG]
+
+write.table(thymus.hvg,
+            file="~/Dropbox/AgeingExperiment/Thymus_HVG.tsv",
+            sep="\t", quote=FALSE, row.names=FALSE)
+
+table(thymus.hvg$HVG)
+```
+
+At a p-value threshold $< 10^{-3}$ there are > 5000 highly variable genes, that's quite a lot! I'll see how these do in the dimensionality 
+reduction and visualisation, but this gene set might need to be reduced a bit.
+
+## Principal components analysis
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+rownames(thymus.sf_norm) <- thymus.sf_norm$gene_id
+thymus.hvg_exprs <- thymus.sf_norm[hvg.genes, -ncol(thymus.sf_norm)]
+# some cells are removed because they are duplicates?
+
+thymus.pca <- pca_wrapper(thymus.hvg_exprs)
+thymus.pcs <- thymus.pca$DF
+
+thymus.pca.merge <- merge(thymus.meta, thymus.pcs, by='Sample')
+thymus.pca.merge$SortDay <- as.factor(thymus.pca.merge$SortDay)
+# how much variance is explained by each component?
+
+var.explained <- (thymus.pca$PCA$sdev**2/sum(thymus.pca$PCA$sdev**2)) * 100
+```
+
+### Plot by age
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=7.75, fig.width=7.75}
+pc1.pc2 <- ggplot(thymus.pca.merge, aes(x=PC1, y=PC2, fill=Age)) +
+  geom_point(shape=21) +
+  theme_mike() +
+  scale_fill_manual(values=age.cols) +
+  #scale_fill_Publication() +
+  guides(fill=guide_legend(ncol=5)) +
+  #guides(fill=FALSE) +
+  labs(x=paste0("PC 1 (", round(var.explained[1], 2), "% var explained)"),
+       y=paste0("PC 2 (", round(var.explained[2], 2), "% var explained)"))
+
+pc2.pc3 <- ggplot(thymus.pca.merge, aes(x=PC2, y=PC3, fill=Age)) +
+  geom_point(shape=21) +
+  theme_mike() +
+  scale_fill_manual(values=age.cols) +
+  #scale_fill_Publication() +
+  #guides(fill=guide_legend(ncol=2)) +
+  guides(fill=FALSE) +
+  labs(x=paste0("PC 2 (", round(var.explained[2], 2), "% var explained)"),
+       y=paste0("PC 3 (", round(var.explained[3], 2), "% var explained)"))
+
+pc3.pc4 <- ggplot(thymus.pca.merge, aes(x=PC3, y=PC4, fill=Age)) +
+  geom_point(shape=21) +
+  theme_mike() +
+  scale_fill_manual(values=age.cols) +
+  #scale_fill_Publication() +
+  #guides(fill=guide_legend(ncol=2)) +
+  guides(fill=FALSE) +
+  labs(x=paste0("PC 3 (", round(var.explained[3], 2), "% var explained)"),
+       y=paste0("PC 4 (", round(var.explained[4], 2), "% var explained)"))
+
+pc4.pc5 <- ggplot(thymus.pca.merge, aes(x=PC4, y=PC5, fill=Age)) +
+  geom_point(shape=21) +
+  theme_mike() +
+  scale_fill_manual(values=age.cols) +
+  #scale_fill_Publication() +
+  #guides(fill=guide_legend(ncol=2)) +
+  guides(fill=FALSE) +
+  labs(x=paste0("PC 4 (", round(var.explained[4], 2), "% var explained)"),
+       y=paste0("PC 5 (", round(var.explained[5], 2), "% var explained)"))
+
+pcs.by.age <- plot_grid(pc1.pc2, pc2.pc3, pc3.pc4, pc4.pc5, nrow=2)
+
+ggsave(pcs.by.age,
+       filename="~/Dropbox/AgeingExperiment/QC/PCA_byAge.png",
+       height=7.75, width=7.75, dpi=300)
+
+pcs.by.age
+```
+
+These are the first 5 principal components, with points coloured by mouse age.  There appears to be some grouping by age, but it is very hard to see, 
+it certainly isn't the dominant signal through the data.
+
+### Plot by cell type
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=7.75, fig.width=7.75}
+pc1.pc2 <- ggplot(thymus.pca.merge, aes(x=PC1, y=PC2, fill=CellType)) +
+  geom_point(shape=21, alpha=0.5) +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  #scale_fill_Publication() +
+  guides(fill=guide_legend(ncol=2)) +
+  theme(legend.title=element_text(size=10)) +
+  labs(x=paste0("PC 1 (", round(var.explained[1], 2), "% var explained)"),
+       y=paste0("PC 2 (", round(var.explained[2], 2), "% var explained)"))
+
+pc2.pc3 <- ggplot(thymus.pca.merge, aes(x=PC2, y=PC3, fill=CellType)) +
+  geom_point(shape=21, alpha=0.5) +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  #scale_fill_Publication() +
+  #guides(fill=guide_legend(ncol=2)) +
+  guides(fill=FALSE) +
+  theme(legend.title=element_text(size=10)) +
+  labs(x=paste0("PC 2 (", round(var.explained[2], 2), "% var explained)"),
+       y=paste0("PC 3 (", round(var.explained[3], 2), "% var explained)"))
+
+pc3.pc4 <- ggplot(thymus.pca.merge, aes(x=PC3, y=PC4, fill=CellType)) +
+  geom_point(shape=21, alpha=0.5) +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  #scale_fill_Publication() +
+  #guides(fill=guide_legend(ncol=2)) +
+  guides(fill=FALSE) +
+  theme(legend.title=element_text(size=10)) +
+  labs(x=paste0("PC 3 (", round(var.explained[3], 2), "% var explained)"),
+       y=paste0("PC 4 (", round(var.explained[4], 2), "% var explained)"))
+
+pc4.pc5 <- ggplot(thymus.pca.merge, aes(x=PC4, y=PC5, fill=CellType)) +
+  geom_point(shape=21, alpha=0.5) +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  #scale_fill_Publication() +
+  #guides(fill=guide_legend(ncol=2)) +
+  guides(fill=FALSE) +
+  theme(legend.title=element_text(size=10)) +
+  labs(x=paste0("PC 4 (", round(var.explained[4], 2), "% var explained)"),
+       y=paste0("PC 5 (", round(var.explained[5], 2), "% var explained)"))
+
+pca.by.cell <- plot_grid(pc1.pc2, pc2.pc3, pc3.pc4, pc4.pc5, nrow=2)
+
+ggsave(pca.by.cell,
+       filename="~/Dropbox/AgeingExperiment/QC/PCA_by_celltype.png",
+       height=7.75, width=7.75, dpi=300)
+
+pca.by.cell
+```
+
+Ok, now we can start to see some more dominant signals.  The cTECs generally sit together quite nicely.  There is some degree of over-plotting here, but that is sort of tricky to avoid.  The gmTEC and mTEChi are also pretty well mixed together.
+
+### Plot by plate
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=7.75, fig.width=7.75}
+pc1.pc2 <- ggplot(thymus.pca.merge, aes(x=PC1, y=PC2, fill=PlateID)) +
+  geom_point(shape=21, alpha=0.5) +
+  theme_mike() +
+  scale_fill_Publication() +
+  guides(fill=FALSE) +
+  labs(x=paste0("PC 1 (", round(var.explained[1], 2), "% var explained)"),
+       y=paste0("PC 2 (", round(var.explained[2], 2), "% var explained)"))
+
+pc2.pc3 <- ggplot(thymus.pca.merge, aes(x=PC2, y=PC3, fill=PlateID)) +
+  geom_point(shape=21, alpha=0.5) +
+  theme_mike() +
+  scale_fill_Publication() +
+  guides(fill=FALSE) +
+  labs(x=paste0("PC 2 (", round(var.explained[2], 2), "% var explained)"),
+       y=paste0("PC 3 (", round(var.explained[3], 2), "% var explained)"))
+
+pc3.pc4 <- ggplot(thymus.pca.merge, aes(x=PC3, y=PC4, fill=PlateID)) +
+  geom_point(shape=21, alpha=0.5) +
+  theme_mike() +
+  scale_fill_Publication() +
+  guides(fill=FALSE) +
+  labs(x=paste0("PC 3 (", round(var.explained[3], 2), "% var explained)"),
+       y=paste0("PC 4 (", round(var.explained[4], 2), "% var explained)"))
+
+pc4.pc5 <- ggplot(thymus.pca.merge, aes(x=PC4, y=PC5, fill=PlateID)) +
+  geom_point(shape=21, alpha=0.5) +
+  theme_mike() +
+  scale_fill_Publication() +
+  guides(fill=FALSE) +
+  labs(x=paste0("PC 4 (", round(var.explained[4], 2), "% var explained)"),
+       y=paste0("PC 5 (", round(var.explained[5], 2), "% var explained)"))
+
+pcs.by.plate <- plot_grid(pc1.pc2, pc2.pc3, pc3.pc4, pc4.pc5, nrow=2)
+
+ggsave(pcs.by.plate,
+       filename="~/Dropbox/AgeingExperiment/QC/PCA_byPlate.png",
+       height=7.75, width=7.75, dpi=300)
+
+pcs.by.plate
+```
+
+There doesn't seem to be any major batch effect driven by the different plates which is encouraging.  Finally, let's look at the sorting day.
+
+### Plot by sorting day
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=7.75, fig.width=7.75}
+pc1.pc2 <- ggplot(thymus.pca.merge, aes(x=PC1, y=PC2, fill=SortDay)) +
+  geom_point(shape=21, alpha=0.5) +
+  theme_mike() +
+  scale_fill_Publication() +
+  #guides(fill=FALSE)+
+  guides(fill=guide_legend(ncol=3)) +
+  labs(x=paste0("PC 1 (", round(var.explained[1], 2), "% var explained)"),
+       y=paste0("PC 2 (", round(var.explained[2], 2), "% var explained)"))
+
+pc2.pc3 <- ggplot(thymus.pca.merge, aes(x=PC2, y=PC3, fill=SortDay)) +
+  geom_point(shape=21, alpha=0.5) +
+  theme_mike() +
+  scale_fill_Publication() +
+  guides(fill=FALSE)+
+  labs(x=paste0("PC 2 (", round(var.explained[2], 2), "% var explained)"),
+       y=paste0("PC 3 (", round(var.explained[3], 2), "% var explained)"))
+
+pc3.pc4 <- ggplot(thymus.pca.merge, aes(x=PC3, y=PC4, fill=SortDay)) +
+  geom_point(shape=21, alpha=0.5) +
+  theme_mike() +
+  scale_fill_Publication() +
+  guides(fill=FALSE)+
+  labs(x=paste0("PC 3 (", round(var.explained[3], 2), "% var explained)"),
+       y=paste0("PC 4 (", round(var.explained[4], 2), "% var explained)"))
+
+pc4.pc5 <- ggplot(thymus.pca.merge, aes(x=PC4, y=PC5, fill=SortDay)) +
+  geom_point(shape=21, alpha=0.5) +
+  theme_mike() +
+  scale_fill_Publication() +
+  guides(fill=FALSE)+
+  labs(x=paste0("PC 4 (", round(var.explained[5], 2), "% var explained)"),
+       y=paste0("PC 5 (", round(var.explained[6], 2), "% var explained)"))
+
+pcs.by.day <- plot_grid(pc1.pc2, pc2.pc3, pc3.pc4, pc4.pc5, nrow=2)
+
+ggsave(pcs.by.day,
+       filename="~/Dropbox/AgeingExperiment/QC/PCA_bySay.png",
+       height=7.75, width=7.75, dpi=300)
+
+pcs.by.day
+```
+
+It also look like the sorting day isn't the dominant signal, which is also very encouraging.
+
+
+## t-distributed stochastic neighbour embedding (tSNE)
+We can also visualise these data in a tSNE, which is aesthetically more appealing.  I'll use the default parameter settings (perplexity=30).
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+thymus.tsne <- tsne_wrapper(thymus.hvg_exprs)
+
+thymus.tsne.merge <- merge(thymus.pca.merge, thymus.tsne, by='Sample')
+thymus.tsne.merge$SortDay <- as.factor(thymus.tsne.merge$SortDay)
+```
+
+### Plot by age
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.25, fig.width=5.25}
+tsne.by.age <- ggplot(thymus.tsne.merge, aes(x=Dim1, y=Dim2, fill=Age)) +
+  geom_point(shape=21) +
+  theme_mike() +
+  scale_fill_Publication() +
+  guides(fill=guide_legend(ncol=2)) +
+  labs(x="tSNE Dimension 1", y="tSNE Dimension 2")
+
+tsne.by.age
+```
+
+In this tSNE plot there looks like there are little groups of cells separating out, but this might just be an artifact of tSNE, I wouldn't interpret 
+these as separate clusters of cells.  There isn't a huge amount of separation by mouse age, which is concordant with the lack of variance in the gene 
+expression data being driven by age.
+
+### Plot by cell type
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.25, fig.width=5.25}
+tsne.by.cell <- ggplot(thymus.tsne.merge, aes(x=Dim1, y=Dim2, fill=CellType)) +
+  geom_point(shape=21) +
+  theme_mike() +
+  scale_fill_Publication() +
+  guides(fill=guide_legend(ncol=2)) +
+  labs(x="tSNE Dimension 1", y="tSNE Dimension 2")
+
+ggsave(tsne.by.cell,
+       filename="~/Dropbox/AgeingExperiment/QC/tSNE_by_celltype.png",
+       height=5.25, width=5.25, dpi=300)
+
+tsne.by.cell
+```
+
+Concordant with the PCA, we can see that the major separation is between cell types.  In particular the mTEChi are quite separate from the other TECs, 
+whilst the cTECs are also quite different.  Interestingly the 'gmTECs' are distributed amongst the mTEChi and mTEClo cells in this tSNE - are they 
+really that different from other mTECs?
+
+
+I have also generated an embedding of the data using an alternative approach, called Uniform Manifold Approximation and Projection.  This 
+approach aims to find a balance between the local and global structure, where tSNE only represents local structure.  The downside is that it 
+requires a bit more optimization (i.e. there are more paramaters, and thus more combinations that can be used to alter the visualisation). 
+Nevertheless, it can still provide a useful means to visualise all of these cells together.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height=5.25, fig.width=5.25}
+thymus.umap <- read.table("~/Dropbox/AgeingExperiment/ALL_Thymus_umap.tsv",
+                          sep="\t", h=TRUE, stringsAsFactors=FALSE)
+umap.merge <- merge(thymus.umap, thymus.tsne.merge, by='Sample')
+
+umap.by.cell <- ggplot(umap.merge, 
+                       aes(x=uDim1, y=uDim2, fill=CellType)) +
+  geom_point(shape=21) +
+  theme_mike() +
+  scale_fill_Publication() +
+  guides(fill=guide_legend(ncol=2)) +
+  labs(x="UMAP Dimension 1", y="UMAP Dimension 2")
+
+ggsave(umap.by.cell,
+       filename="~/Dropbox/AgeingExperiment/Analysis/Reports/AgingUMAP_byCell.png",
+       height=5.25, width=5.25, dpi=300)
+
+umap.by.cell
+```
+
+I've also run it using Jeanette's TF-IDF weighted co-expression values.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height=5.25, fig.width=5.25}
+tfidf.umap <- read.table("~/Dropbox/AgeingExperiment/Data/TF-IDF_Thymus_umap.tsv",
+                          sep="\t", h=TRUE, stringsAsFactors=FALSE)
+tfidf.umap.merge <- merge(tfidf.umap, thymus.tsne.merge, by='Sample')
+
+tfidf.umap.by.cell <- ggplot(tfidf.umap.merge, 
+                       aes(x=uDim1, y=uDim2, fill=CellType)) +
+  geom_point(shape=21) +
+  theme_mike() +
+  scale_fill_Publication() +
+  guides(fill=guide_legend(ncol=2)) +
+  labs(x="UMAP Dimension 1", y="UMAP Dimension 2")
+
+ggsave(tfidf.umap.by.cell,
+       filename="~/Dropbox/AgeingExperiment/Analysis/Reports/TF_IDF-AgingUMAP_byCell.png",
+       height=5.25, width=5.25, dpi=300)
+
+tfidf.umap.by.cell
+```
+
+Given that cells seem to largely clump together by identiy, can we defined a clustering on the expression of these cells?  I'll use my 
+favourite graph-based approach: shared nearest neighbour, with the Walktrap algorithm to define clusters on the graph.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+set.seed(42)
+thymus.snn <- buildSNNGraph(thymus.hvg_exprs, pc.approx=TRUE, k=25, d=15, rand.seed=42)
+#thymus.comm <- cluster_walktrap(thymus.snn, steps=4, membership=TRUE)
+thymus.comm <- cluster_walktrap(thymus.snn, steps=4, membership=TRUE)
+thymus.clusters <- do.call(cbind.data.frame,
+                           list("Sample"=colnames(thymus.hvg_exprs),
+                                "Cluster"=as.factor(thymus.comm$membership)))
+
+cluster.merge <- merge(thymus.clusters, umap.merge, by='Sample')
+table(cluster.merge$Cluster)
+```
+
+Identified `r length(unique(cluster.merge$Cluster))` clusters in total, some of which are quite variable in size. 
+It's worth noting that the Walktrap algorithm has a tendency to over cluster the data.  This isn't an issue as we can merge 
+clusters together if needs be.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=6.25, fig.width=6.25}
+tsne.by.cluster <- ggplot(cluster.merge, 
+       aes(x=Dim1, y=Dim2, fill=Cluster)) +
+  geom_point(shape=21, size=3) +
+  theme_mike() +
+  scale_fill_Publication() +
+  guides(fill=guide_legend(ncol=4)) +
+  labs(x="tSNE Dimension 1", y="tSNE Dimension 2")
+
+ggsave(tsne.by.cluster,
+       filename="~/Dropbox/AgeingExperiment/Analysis/Reports/tSNE_graphClusters.png",
+       height=6.25, width=6.25, dpi=300)
+
+tsne.by.cluster
+```
+
+How do these compare to the different cell types, and then ages?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+table(cluster.merge$Cluster, cluster.merge$CellType)
+```
+
+Most clusters seem to contain cells from nearly all 4 populations (with a few exceptions).  Several are also dominated by just one or 
+two cell types.  For instance, Cluster 8 consists almost entirely of cTECs.
+
+## Graph based clustering using TF-IDF values
+
+We can also use the TF-IDF values as input to construct the graph, which would give us a hard clustering on the same input manifold as 
+the tSNE.  The large number of genes might be causing some issues here, with respect to adding noise.  To that end I'll try using just the 
+HVGs already defined, in conjunction with the TF-IDF expression values.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+tfidf <- read.table("~/Dropbox/AgeingExperiment/Data/ThymusQC_SFnorm-gt10-tf-idf.tsv.gz",
+                    sep="\t", h=TRUE, stringsAsFactors=FALSE)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+tfidf.hvg <- tfidf[intersect(hvg.genes, rownames(tfidf)), ]
+tfidf.snn <- buildSNNGraph(tfidf.hvg, k=25, d=15, pc.approx=TRUE, rand.seed=42)
+
+# switch to the Louvain algorithm
+#tfidf.comm <- cluster_louvain(tfidf.snn)
+tfidf.comm <- cluster_walktrap(tfidf.snn, steps=4, membership=TRUE)
+tfidf.clusters <- do.call(cbind.data.frame,
+                           list("Sample"=colnames(tfidf.hvg),
+                                "TFIDF.Cluster"=as.factor(tfidf.comm$membership)))
+cluster.merge$Sample <- as.character(cluster.merge$Sample)
+tfidf.cluster.merge <- merge(tfidf.clusters, cluster.merge, by='Sample')
+table(tfidf.cluster.merge$TFIDF.Cluster)
+```
+
+I want to optimise the clustering here.  One way is to vary either `k` or `d` for the graph building, or the clustering algorithm.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# vary d from 2-10 in specific increments
+# fix k=20 and use cluster_walktrap()
+d.var <- c(2, 3, 4, 5, 7, 10, 12, 15, 20, 25, 35, 50)
+cluster.res.list <- list()
+cell.dist <- dist(t(tfidf.hvg))
+
+for(i in seq_along(d.var)){
+  alg.list <- list()
+  d <- d.var[i]
+  
+  d.snn <- buildSNNGraph(tfidf.hvg, k=20, d=d, pc.approx=TRUE, rand.seed=42)
+  d.walk <- cluster_walktrap(d.snn, steps=4, membership=TRUE)
+  d.louv <- cluster_louvain(d.snn)
+
+  # calculate the cluster separation
+  
+  d.walk.stats <- cluster.stats(d=cell.dist,
+                                clustering=d.walk$membership,
+                                silhouette=TRUE)
+  
+  d.louv.stats <- cluster.stats(d=cell.dist,
+                                clustering=d.louv$membership,
+                                silhouette=TRUE)
+  
+  alg.list[["Walktrap"]] <- data.frame("Ave.Silhouette"=d.walk.stats$clus.avg.silwidths,
+                                       "Diameter"=d.walk.stats$diameter,
+                                       "Ave.Distance"=d.walk.stats$average.distance,
+                                       "Separation"=d.walk.stats$separation,
+                                       "Algorithm"="Walktrap")
+    
+  alg.list[["Louvain"]] <- data.frame("Ave.Silhouette"=d.louv.stats$clus.avg.silwidths,
+                                      "Diameter"=d.louv.stats$diameter,
+                                      "Ave.Distance"=d.louv.stats$average.distance,
+                                      "Separation"=d.louv.stats$separation,
+                                      "Algorithm"="Louvain")
+  
+  cluster.res.list[[paste0(d)]] <- do.call(rbind.data.frame,
+                                           alg.list)
+}
+
+cluster.results <- do.call(rbind.data.frame,
+                           cluster.res.list)
+cluster.results$D <- unlist(lapply(strsplit(rownames(cluster.results), split=".", fixed=TRUE),
+                                   FUN=function(X) paste0(X[1])))
+cluster.results$D <- factor(cluster.results$D,
+                            levels=d.var,
+                            labels=d.var)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.75}
+d.sil <- ggplot(cluster.results, aes(x=D, y=Ave.Silhouette, fill=Algorithm)) + 
+  geom_boxplot() +
+  theme_mike() +
+  labs(x="N reduced dimensions") +
+  scale_y_continuous(limits=c(-0.3, 0), oob=squish)
+
+d.diam <- ggplot(cluster.results, aes(x=D, y=Diameter, fill=Algorithm)) + 
+  geom_boxplot() +
+  theme_mike() +
+  labs(x="N reduced dimensions") +
+  #scale_y_continuous(limits=c(-0.3, 0), oob=squish) +
+  NULL
+
+d.dist <- ggplot(cluster.results, aes(x=D, y=Ave.Distance, fill=Algorithm)) + 
+  geom_boxplot() +
+  theme_mike() +
+  labs(x="N reduced dimensions") +
+  #scale_y_continuous(limits=c(-0.3, 0), oob=squish) +
+  NULL
+
+
+d.sep <- ggplot(cluster.results, aes(x=D, y=Separation, fill=Algorithm)) + 
+  geom_boxplot() +
+  theme_mike() +
+  labs(x="N reduced dimensions") +
+  #scale_y_continuous(limits=c(-0.3, 0), oob=squish) +
+  NULL
+
+plot_grid(d.sil, d.diam, d.dist, d.sep, ncol=2)
+```
+
+There isn't a huge difference between many of the clusters, maybe the distribution of average dostamces and cluster diameters is less variable using 20 or more 
+reduced dimensions.  What effect does varying `k` have?
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# vary k from 2-10 in specific increments
+# fix d=10 and use cluster_walktrap()
+k.var <- c(5, 10, 15, 20, 25, 30, 50, 75, 100)
+kluster.res.list <- list()
+
+for(i in seq_along(k.var)){
+  alg.list <- list()
+  k <- k.var[i]
+  
+  k.snn <- buildSNNGraph(tfidf.hvg, k=k, d=10, pc.approx=TRUE, rand.seed=42)
+  k.walk <- cluster_walktrap(k.snn, steps=4, membership=TRUE)
+  k.louv <- cluster_louvain(k.snn)
+
+  # calculate the cluster separation
+  
+  k.walk.stats <- cluster.stats(d=cell.dist,
+                                clustering=k.walk$membership,
+                                silhouette=TRUE)
+  
+  k.louv.stats <- cluster.stats(d=cell.dist,
+                                clustering=k.louv$membership,
+                                silhouette=TRUE)
+  
+  alg.list[["Walktrap"]] <- data.frame("Ave.Silhouette"=k.walk.stats$clus.avg.silwidths,
+                                       "Diameter"=k.walk.stats$diameter,
+                                       "Ave.Distance"=k.walk.stats$average.distance,
+                                       "Separation"=k.walk.stats$separation,
+                                       "Algorithm"="Walktrap")
+    
+  alg.list[["Louvain"]] <- data.frame("Ave.Silhouette"=k.louv.stats$clus.avg.silwidths,
+                                      "Diameter"=k.louv.stats$diameter,
+                                      "Ave.Distance"=k.louv.stats$average.distance,
+                                      "Separation"=k.louv.stats$separation,
+                                      "Algorithm"="Louvain")
+  
+  cluster.res.list[[paste0(k)]] <- do.call(rbind.data.frame,
+                                           alg.list)
+}
+
+kluster.results <- do.call(rbind.data.frame,
+                           cluster.res.list)
+kluster.results$K <- unlist(lapply(strsplit(rownames(kluster.results), split=".", fixed=TRUE),
+                                   FUN=function(X) paste0(X[1])))
+kluster.results$K <- factor(kluster.results$K,
+                            levels=k.var,
+                            labels=k.var)
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.75}
+k.sil <- ggplot(kluster.results, aes(x=K, y=Ave.Silhouette, fill=Algorithm)) + 
+  geom_boxplot() +
+  theme_mike() +
+  labs(x="K nearest neighbours") +
+  scale_y_continuous(limits=c(-0.3, 0), oob=squish)
+
+k.diam <- ggplot(kluster.results, aes(x=K, y=Diameter, fill=Algorithm)) + 
+  geom_boxplot() +
+  theme_mike() +
+  labs(x="K nearest neighbours") +
+  #scale_y_continuous(limits=c(-0.3, 0), oob=squish) +
+  NULL
+
+k.dist <- ggplot(kluster.results, aes(x=K, y=Ave.Distance, fill=Algorithm)) + 
+  geom_boxplot() +
+  theme_mike() +
+  labs(x="K nearest neighbours") +
+  #scale_y_continuous(limits=c(-0.3, 0), oob=squish) +
+  NULL
+
+k.sep <- ggplot(kluster.results, aes(x=K, y=Separation, fill=Algorithm)) + 
+  geom_boxplot() +
+  theme_mike() +
+  labs(x="K nearest neighbours") +
+  #scale_y_continuous(limits=c(-0.3, 0), oob=squish) +
+  NULL
+
+plot_grid(k.sil, k.diam, k.dist, k.sep, ncol=2)
+```
+
+Most of the clustering metrics seem invariant to the value of `k`, though perpahs it is a little more consitent around k 20-50.  Now what impact does the 
+algorithm have?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# vary k from 2-10 in specific increments
+# fix d=20 and use cluster_walktrap()
+algorithm.res.list <- list()
+
+# I'll fix k=30 and d=20
+k.snn <- buildSNNGraph(tfidf.hvg, k=20, d=10, pc.approx=TRUE, rand.seed=42)
+k.walktrap <- cluster_walktrap(k.snn, steps=4, membership=TRUE)
+k.louvain <- cluster_louvain(k.snn)
+
+# calculate the cluster separation
+walk.stats <- cluster.stats(d=cell.dist,
+                            clustering=k.walktrap$membership,
+                            silhouette=TRUE)
+
+louv.stats <- cluster.stats(d=cell.dist,
+                            clustering=k.louvain$membership,
+                            silhouette=TRUE)
+
+
+algorithm.res.list[["Louvain"]] <- list("Ave.Silhouette"=louv.stats$clus.avg.silwidths,
+                                      "Diameter"=louv.stats$diameter,
+                                      "Ave.Distance"=louv.stats$average.distance,
+                                      "Separation"=louv.stats$separation)
+
+algorithm.res.list[["Walktrap"]] <- list("Ave.Silhouette"=walk.stats$clus.avg.silwidths,
+                                       "Diameter"=walk.stats$diameter,
+                                       "Ave.Distance"=walk.stats$average.distance,
+                                       "Separation"=walk.stats$separation)
+
+algorithn.results <- do.call(rbind.data.frame,
+                           algorithm.res.list)
+algorithn.results$Algorithm <- unlist(lapply(strsplit(rownames(algorithn.results), split=".", fixed=TRUE),
+                                           FUN=function(X) paste0(X[1])))
+algorithn.results$Algorithm <- as.factor(algorithn.results$Algorithm)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.75}
+a.sil <- ggplot(algorithn.results, aes(x=Algorithm, y=Ave.Silhouette)) + 
+  geom_boxplot() +
+  theme_mike() +
+  labs(x="K nearest neighbours") +
+  scale_y_continuous(limits=c(-0.3, 0), oob=squish)
+
+a.diam <- ggplot(algorithn.results, aes(x=Algorithm, y=Diameter)) + 
+  geom_boxplot() +
+  theme_mike() +
+  labs(x="K nearest neighbours") +
+  #scale_y_continuous(limits=c(-0.3, 0), oob=squish) +
+  NULL
+
+a.dist <- ggplot(algorithn.results, aes(x=Algorithm, y=Ave.Distance)) + 
+  geom_boxplot() +
+  theme_mike() +
+  labs(x="K nearest neighbours") +
+  #scale_y_continuous(limits=c(-0.3, 0), oob=squish) +
+  NULL
+
+a.sep <- ggplot(algorithn.results, aes(x=Algorithm, y=Separation)) + 
+  geom_boxplot() +
+  theme_mike() +
+  labs(x="K nearest neighbours") +
+  #scale_y_continuous(limits=c(-0.3, 0), oob=squish) +
+  NULL
+
+plot_grid(a.sil, a.diam, a.dist, a.sep, ncol=2)
+```
+
+Generally speaking there isn't much between the Louvain and Walktrap algorithms, though the average silhouette widths are slightly less negative for the 
+walktrap algorithm meaning that their placement in a cluster is generally _less_ wrong than the Louvain algorithm.
+
+If we base this on the silhouette distance, then the best combination looks like d=10, k=30 with the walktrap algorithm.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+tfidf.snn <- buildSNNGraph(tfidf.hvg, k=35, d=15, pc.approx=TRUE, rand.seed=42)
+
+# switch to the Louvain algorithm
+#tfidf.comm <- cluster_louvain(tfidf.snn)
+tfidf.comm <- cluster_walktrap(tfidf.snn, steps=4, membership=TRUE)
+tfidf.clusters <- do.call(cbind.data.frame,
+                           list("Sample"=colnames(tfidf.hvg),
+                                "TFIDF.Cluster"=as.factor(tfidf.comm$membership)))
+cluster.merge$Sample <- as.character(cluster.merge$Sample)
+tfidf.cluster.merge <- merge(tfidf.clusters, cluster.merge, by='Sample')
+table(tfidf.cluster.merge$TFIDF.Cluster)
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=6.25, fig.width=6.25}
+tsne.by.cluster <- ggplot(tfidf.cluster.merge, 
+       aes(x=Dim1, y=Dim2, fill=TFIDF.Cluster)) +
+  geom_point(shape=21, size=3) +
+  theme_mike() +
+  scale_fill_Publication() +
+  guides(fill=guide_legend(ncol=4)) +
+  labs(x="tSNE Dimension 1", y="tSNE Dimension 2")
+
+ggsave(tsne.by.cluster,
+       filename="~/Dropbox/AgeingExperiment/Analysis/Reports/HVG-tSNE_TFIDF-graphClusters.png",
+       height=6.25, width=6.25, dpi=300)
+
+tsne.by.cluster
+```
+
+And with the normal expression values using the same clustering parameters.
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+set.seed(42)
+thymus.snn <- buildSNNGraph(thymus.hvg_exprs, pc.approx=TRUE, k=35, d=15, rand.seed=42)
+thymus.comm <- cluster_walktrap(thymus.snn, steps=4, membership=TRUE)
+thymus.comm <- cluster_louvain(thymus.snn)
+thymus.clusters <- do.call(cbind.data.frame,
+                           list("Sample"=colnames(thymus.hvg_exprs),
+                                "Cluster"=as.factor(thymus.comm$membership)))
+
+cluster.merge <- merge(thymus.clusters, umap.merge, by='Sample')
+table(cluster.merge$Cluster)
+```
+
+Identified `r length(unique(cluster.merge$Cluster))` clusters in total, some of which are quite variable in size. 
+It's worth noting that the Walktrap algorithm has a tendency to over cluster the data.  This isn't an issue as we can merge 
+clusters together if needs be.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=6.25, fig.width=6.25}
+tsne.by.cluster <- ggplot(cluster.merge, 
+       aes(x=Dim1, y=Dim2, fill=Cluster)) +
+  geom_point(shape=21, size=3) +
+  theme_mike() +
+  scale_fill_Publication() +
+  guides(fill=guide_legend(ncol=4)) +
+  labs(x="tSNE Dimension 1", y="tSNE Dimension 2")
+
+ggsave(tsne.by.cluster,
+       filename="~/Dropbox/AgeingExperiment/Analysis/Reports/tSNE_graphClusters.png",
+       height=6.25, width=6.25, dpi=300)
+
+tsne.by.cluster
+```
+
+Compare the clustering between TF-IDF and HVGs.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+table(tfidf.cluster.merge$Cluster, tfidf.cluster.merge$TFIDF.Cluster)
+```
+
+I'll also use the TF-IDF expression values to visualise the cells and clusters by tSNE.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+tfidf.tsne <- tsne_wrapper(tfidf.hvg)
+colnames(tfidf.tsne) <- c("TFIDF.Dim1", "TFIDF.Dim2", "Sample")
+tfidf.tsne.merge <- merge(tfidf.cluster.merge, tfidf.tsne, by='Sample')
+tfidf.tsne.merge$SortDay <- as.factor(tfidf.tsne.merge$SortDay)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=6.25, fig.width=6.25}
+cell.cols <- c("#f2a242", "#ed7a75", "#6ab2f9", "#b4b8b7")
+names(cell.cols) <- c("cTEC", "mTEClo", "mTEChi", "gmTEC")
+
+tsne.by.cell <- ggplot(tfidf.tsne.merge, 
+       aes(x=TFIDF.Dim1, y=TFIDF.Dim2, fill=CellType)) +
+  geom_point(shape=21, size=3) +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  guides(fill=guide_legend(ncol=4)) +
+  labs(x="tSNE Dimension 1", y="tSNE Dimension 2")
+
+ggsave(tsne.by.cell,
+       filename="~/Dropbox/AgeingExperiment/Analysis/Reports/TFIDF-tSNE_TFIDF-CellType.png",
+       height=6.25, width=6.25, dpi=300)
+
+tsne.by.cell
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=6.25, fig.width=6.25}
+tsne.by.cluster <- ggplot(tfidf.tsne.merge, 
+       aes(x=TFIDF.Dim1, y=TFIDF.Dim2, fill=TFIDF.Cluster)) +
+  geom_point(shape=21, size=3) +
+  theme_mike() +
+  scale_fill_Publication() +
+  guides(fill=guide_legend(ncol=4)) +
+  labs(x="tSNE Dimension 1", y="tSNE Dimension 2")
+
+ggsave(tsne.by.cluster,
+       filename="~/Dropbox/AgeingExperiment/Analysis/Reports/TFIDF-tSNE_TFIDF-graphClusters.png",
+       height=6.25, width=6.25, dpi=300)
+
+tsne.by.cluster
+```
+
+How do these clusters compare to the sorted cell types?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+thymus.stat <- as.data.frame(table(tfidf.tsne.merge$TFIDF.Cluster, tfidf.tsne.merge$CellType))
+thymus.stat <- thymus.stat[order(thymus.stat$Var1, thymus.stat$Var2), ]
+thymus.stat$Frac <- as.numeric(unlist(by(thymus.stat$Freq, INDICES=thymus.stat$Var1,
+                                         FUN=function(X) X/sum(X))))
+
+cluster.comp <- ggplot(thymus.stat,
+       aes(x=Var1, y=Frac, fill=Var2)) +
+  geom_bar(stat='identity') +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  labs(x="Cluster", y="Percentage Cells") +
+  guides(fill=guide_legend(title="Cell Type"))
+
+cluster.comp
+```
+
+# Sanity checking
+
+We know there are some genes which should be expressed, either specifically or more highly, in particular populations of TECs.  Let's see how the 
+expression of these stacks up between cell types and between cells from different ages of mice.
+
+The genes I'll check are `r c("Aire", "Cd80", "Cd86", "Dsg3", "Tspan8", "Ptprc", "Epcam", "Enpep", "H2-M2", "H2-M3", "H2-M5", "H2-M9",
+         "H2-Oa",  "H2-K1", "H2-K2", "H2-Eb1", "H2-Eb2", "Krt8", "Krt5", "Foxn1", "Ly75", "Cd40",
+          "Cd40l", "Tnfrdf11a")`.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+goi <- c("Aire", "Cd80", "Cd86", "Dsg3", "Tspan8", "Ptprc", "Epcam", "Enpep", "H2-M2", "H2-M3", "H2-M5", "H2-M9",
+         "H2-Oa",  "H2-K1", "H2-K2", "H2-Eb1", "H2-Eb2", "Krt8", "Krt5", "Krt13", "Krt15", "Foxn1", "Ly75", "Cd40",
+          "Cd40l", "Tnfrdf11a")
+goi.ensembl <- gene_symbol$ensembl_gene_id[gene_symbol$external_gene_name %in% goi]
+marker.exprs <- as.data.frame(t(thymus.sf_norm[rownames(thymus.sf_norm) %in% goi.ensembl, ]))
+gene.ids <- colnames(marker.exprs)
+marker.exprs <- as.data.frame(apply(marker.exprs, 2, as.numeric))
+colnames(marker.exprs) <- gene_symbol[gene.ids, ]$external_gene_name
+
+marker.exprs$Sample <- colnames(thymus.sf_norm)
+
+thymus.meta.merge <- merge(marker.exprs, tfidf.tsne.merge, by='Sample')
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# setup some consistent colour palettes
+cell.cols <- c("#386cb0", "#fdb462", "#7fc97f","#ef3b2c")
+names(cell.cols) <- c("cTEC", "gmTEC", "mTEChi", "mTEClo")
+```
+
+## Aire expression by cell type and age
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta.merge,
+       aes(x=Age, y=Aire, fill=CellType)) +
+  geom_violin(alpha=0.6) +
+  geom_jitter(size=1, alpha=0.4) +
+  geom_line() +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  facet_wrap(~CellType)
+```
+
+There's quite a lot of variability in Aire expression, with the greatest concentration in the mTEChi cells, which makes perfect sense.  There doesn't 
+appear to be any specific decline in expression over time.  Expression of Aire in other mTEC subsets is very sporadic, though there is a small set 
+of gmTECs that express Aire that declines after 4 weeks.  The number of Aire+ gmTEC cells is very small though
+
+## Foxn1 expression by cell type and age
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta.merge,
+       aes(x=Age, y=Foxn1, fill=CellType)) +
+  geom_violin(alpha=0.6) +
+  geom_jitter(size=1, alpha=0.4) +
+  geom_line() +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  facet_wrap(~CellType)
+```
+
+_Foxn1_ expression is quite sporadic, and highest in the cTEC and mTEChi compartments.  There doesn't seem to be an obvious agre-dependent change in 
+expression.
+
+## Cd45 expression by cell type and age
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta.merge,
+       aes(x=Age, y=Ptprc, fill=CellType)) +
+  geom_violin(alpha=0.6) +
+  geom_jitter(size=1, alpha=0.4) +
+  geom_line() +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  facet_wrap(~CellType)
+```
+
+These cells should basically be Cd45-, which largely appears to be the case.  Expression looks very sporadic, so this might be attributable to 
+promiscuous gene expression.
+
+## Ly51 expression by cell type and age
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta.merge,
+       aes(x=Age, y=Enpep, fill=CellType)) +
+  geom_violin(alpha=0.6) +
+  geom_jitter(size=1, alpha=0.4) +
+  geom_line() +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  facet_wrap(~CellType)
+```
+
+Ly51 (_Enpep_) expression is mostly in the cTEC, but it is still quite sporadic.  Looking at the FACS data, it seems that expression is concentrated 
+in these cells, but it is not necessarily specific.
+
+## Tspan8 expression by cell type and age
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta.merge,
+       aes(x=Age, y=Tspan8, fill=CellType)) +
+  geom_violin(alpha=0.6) +
+  geom_jitter(size=1, alpha=0.4) +
+  geom_line() +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  facet_wrap(~CellType)
+```
+
+_Tspan8_ is mostly constrained to the mTEChi and gmTECs, but at very low and heterogenous levels.
+
+## Krt5 expression by cell type and age
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta.merge,
+       aes(x=Age, y=Krt5, fill=CellType)) +
+  geom_violin(alpha=0.6) +
+  geom_jitter(size=1, alpha=0.4) +
+  geom_line() +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  facet_wrap(~CellType)
+```
+
+_Krt5_ most highly epressed on mTEClo.  Interestingly there are 2 age-dependent increases in expression in the cTECs and gmTECs.
+
+## Krt8 expression by cell type and age
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta.merge,
+       aes(x=Age, y=Krt8, fill=CellType)) +
+  geom_violin(alpha=0.6) +
+  geom_jitter(size=1, alpha=0.4) +
+  geom_line() +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  facet_wrap(~CellType)
+```
+
+_Krt8_ is constituitively highly expressed in all TEC types.  Is there a subtle decline in _Krt8_ expressed in the cTECs over time?
+
+## Cd86 expression by cell type and age
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta.merge,
+       aes(x=Age, y=Cd86, fill=CellType)) +
+  geom_violin(alpha=0.6) +
+  geom_jitter(size=1, alpha=0.4) +
+  geom_line() +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  facet_wrap(~CellType)
+```
+
+Cd86 is basically absent from cTEC, and heterogenously expressed on mTEChi.  There are a few gmTEC and mTEClo cells with detectable _Cd86_, is this 
+likely mis-classification as cells that lie close to the gating boundaries?
+
+## Cd80 expression by cell type and age
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta.merge,
+       aes(x=Age, y=Cd80, fill=CellType)) +
+  geom_violin(alpha=0.6) +
+  geom_jitter(size=1, alpha=0.4) +
+  geom_line() +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  facet_wrap(~CellType)
+```
+
+_Cd80_ mRNA is more specific for mTEChi than _Cd86_ is alone.  If I recall, there is always a discrepancy between cytoplasmic _Cd80_/_Cd86_ and 
+surface protein levels, so this is not surprising.
+
+## MHC molecule expression by cell type and age
+
+I've included a few different MHC class II genes, as I can never remember which haplotypes C57BL/6 mice express.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta.merge,
+       aes(x=Age, y=`H2-K1`, fill=CellType)) +
+  geom_violin(alpha=0.6) +
+  geom_jitter(size=1, alpha=0.4) +
+  geom_line() +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  facet_wrap(~CellType)
+```
+
+Wel, I guess they all express _H2-K1_.  There aren't any age-dependent changes in expression.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta.merge,
+       aes(x=Age, y=`H2-K2`, fill=CellType)) +
+  geom_violin(alpha=0.6) +
+  geom_jitter(size=1, alpha=0.4) +
+  geom_line() +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  facet_wrap(~CellType)
+```
+
+The _H2-K2_ gene is lower, I don't know how homologous -K1 and -K2 are, so this might just be cross-mapping between MHCII genes.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta.merge,
+       aes(x=Age, y=`H2-Oa`, fill=CellType)) +
+  geom_violin(alpha=0.6) +
+  geom_jitter(size=1, alpha=0.4) +
+  geom_line() +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  facet_wrap(~CellType)
+```
+
+_H2-Oa_ is more variable both across TEC types, and age.  It is particularly variable in the gmTEC, but not necessarily consistent with increasing age.
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta.merge,
+       aes(x=Age, y=`H2-Eb1`, fill=CellType)) +
+  geom_violin(alpha=0.6) +
+  geom_jitter(size=1, alpha=0.4) +
+  geom_line() +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  facet_wrap(~CellType)
+```
+
+_H2-Eb1_ is pretty homogenous in expression.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta.merge,
+       aes(x=Age, y=`H2-Eb2`, fill=CellType)) +
+  geom_violin(alpha=0.6) +
+  geom_jitter(size=1, alpha=0.4) +
+  geom_line() +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  facet_wrap(~CellType)
+```
+
+Now, _H2-Eb2_ is a bit more specific in it's expresison in the mTEC compartment.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta.merge,
+       aes(x=Age, y=`H2-M2`, fill=CellType)) +
+  geom_violin(alpha=0.6) +
+  geom_jitter(size=1, alpha=0.4) +
+  geom_line() +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  facet_wrap(~CellType)
+```
+
+Likewise, _H2-M2_ also shows a bit more specificity, I'm not sure if this is cross-mapping with other H2-M genes though.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta.merge,
+       aes(x=Age, y=`H2-M3`, fill=CellType)) +
+  geom_violin(alpha=0.6) +
+  geom_jitter(size=1, alpha=0.4) +
+  geom_line() +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  facet_wrap(~CellType)
+```
+
+This looks remarkably similar to _H2-M2_ expression, there might be some cross-mapping issues here with different MHC genes.
+
+## Epcam expression by cell type and age
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta.merge,
+       aes(x=Age, y=Epcam, fill=CellType)) +
+  geom_violin(alpha=0.6) +
+  geom_jitter(size=1, alpha=0.4) +
+  geom_line() +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  facet_wrap(~CellType)
+```
+
+
+This should be consistently high across cells, there doesn't appear to be any age-related decline expression visually.
+
+## Dsg3 expression by cell type and age
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(thymus.meta.merge,
+       aes(x=Age, y=Dsg3, fill=CellType)) +
+  geom_violin(alpha=0.6) +
+  geom_jitter(size=1, alpha=0.4) +
+  geom_line() +
+  theme_mike() +
+  scale_fill_manual(values=cell.cols) +
+  facet_wrap(~CellType)
+```
+
+I think this is supposed to be a marker of gmTECs?  It looks slightly higher in the FACS data, but not by much.  This might also be a protein whose 
+surface expression is discordant with the cytoplasmic mRNA levels.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+thymus.meta.merge <- merge(thymus.meta.merge, thymus.size_factors, by='Sample')
+thymus.meta.merge <- merge(thymus.meta.merge, thymus.spike_factors, by='Sample')
+
+write.table(thymus.meta.merge,
+            file="~/Dropbox/AgeingExperiment/ThymusMarker_tSNE_PCA_meta.tsv",
+            sep="\t", quote=FALSE, row.names=FALSE)
+```
+
+
