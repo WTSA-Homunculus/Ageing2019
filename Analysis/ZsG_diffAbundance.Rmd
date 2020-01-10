@@ -1,0 +1,971 @@
+---
+title: "beta5-t ZsGreen abundance testing"
+output: html_notebook
+---
+
+# Introduction
+
+We wish to determine how ageing alters the differentiation dynamics of TEC lineages derived from the $\beta$5-t progenitor.
+
+```{r}
+library(ggplot2)
+library(scales)
+library(biomaRt)
+library(ggrepel)
+library(scran)
+library(irlba)
+library(stringr)
+library(igraph)
+library(ggrepel)
+library(reshape2)
+library(umap)
+library(pheatmap)
+library(ComplexHeatmap)
+library(viridis)
+library(FNN)
+library(cowplot)
+library(batchelor)
+library(schex)
+library(ggrastr)
+library(cydar)
+library(edgeR)
+library(RColorBrewer)
+library(DropletUtils)
+source("~/Dropbox/R_sessions/SingleCellFunctions/single_cell_functions.R")
+source("~/Dropbox/R_sessions/GGMike/theme_mike.R")
+```
+
+
+```{r}
+zsg.meta <- read.table("~/CI_filesystem/mnt/scratchb/jmlab/morgan02/10X/Thymus_ZsG/ZsG_GOI_metadata.tsv",
+                       sep="\t", header=TRUE, stringsAsFactors=FALSE)
+
+n.clusters <- length(unique(zsg.meta$ZsG.Cluster))
+zsg.meta$ZsG.Cluster <- factor(zsg.meta$ZsG.Cluster,
+                               levels=c(1:n.clusters),
+                               labels=c(1:n.clusters))
+
+zsg.meta$Age <- factor(zsg.meta$Age,
+                       levels=c("Wk1", "Wk4", "Wk16"),
+                       labels=c("Wk1", "Wk4", "Wk16"))
+zsg.meta$Rep <- gsub(zsg.meta$CellOrigin, pattern="Run[1-2]", replacement="")
+```
+
+The first analysis needs to ignore the ZsG+/- labelling  count clusters
+
+```{r}
+cluster.table <- as.data.frame(xtabs(~ ZsG.Cluster + Age + Rep, data=zsg.meta))
+
+# cast into square matrix format to make normalisation easier
+zsg.clust.mat <- dcast(cluster.table, ZsG.Cluster ~ Age + Rep, value.var='Freq')
+
+rownames(zsg.clust.mat) <- paste0("Cluster", zsg.clust.mat$ZsG.Cluster)
+
+ab.samps <- colnames(zsg.clust.mat)[-1]
+ab.ages <- unlist(lapply(strsplit(ab.samps, fixed=TRUE, split="_"), FUN=function(X) paste0(X[1])))
+ab.sort <- unlist(lapply(strsplit(ab.samps, fixed=TRUE, split="_"), FUN=function(X) paste0(X[2])))
+ab.hto <- unlist(lapply(strsplit(ab.samps, fixed=TRUE, split="_"), FUN=function(X) paste0(X[3])))
+
+counts.meta <- data.frame("Sample"=ab.samps, "Age"=ab.ages, "Sort"=ab.sort, "Rep"=ab.hto)
+counts.meta$Sample <- as.character(counts.meta$Sample)
+counts.meta$Age <- factor(counts.meta$Age,
+                          levels=c("Wk1", "Wk4", "Wk16"),
+                          labels=c("Wk1", "Wk4", "Wk16"))
+rownames(counts.meta) <- counts.meta$Sample
+counts.meta$AgeInt <- as.numeric(gsub(as.character(counts.meta$Age), patter="Wk", replacement=""))
+counts.meta$AgeInt <- ordered(counts.meta$AgeInt)
+
+# remove columns with 0 sum
+zsg.clust.mat <- zsg.clust.mat[, -1]
+zsg.clust.mat <- zsg.clust.mat[, colSums(zsg.clust.mat)  > 0]
+```
+
+Do the DA testing with edgeR.
+
+```{r}
+thymus.dge <- DGEList(zsg.clust.mat, lib.size=colSums(zsg.clust.mat))
+
+thymus.design <- model.matrix(~ AgeInt + Sort, data=counts.meta[colnames(zsg.clust.mat), ])
+thymus.dge <- estimateDisp(thymus.dge, thymus.design, trend="none")
+thymus.fit <- glmQLFit(thymus.dge, thymus.design, robust=TRUE, abundance.trend=FALSE)
+thymus.res <- as.data.frame(topTags(glmQLFTest(thymus.fit, coef=2), n=Inf))
+thymus.res$Sig <- as.factor(as.numeric(thymus.res$FDR <= 0.05))
+thymus.res$Cluster <- rownames(thymus.res)
+
+# control the spatial FDR
+qvals <- thymus.res$FDR
+is.sig <- qvals <= 0.05
+summary(is.sig)
+```
+
+```{r}
+eps <- max(abs(thymus.res$logFC))
+axis.max <- eps + (eps*0.1)
+
+# add interpretations to the clusters
+thymus.res$TECtype <- "Unknown"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster1")] <- "mTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster3")] <- "mTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster14")] <- "mTEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster6")] <- "mTEC.4"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster20")] <- "mTEC.5"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster22")] <- "mTEC.6"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster16")] <- "mTEC.7"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster4")] <- "iTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster7")] <- "iTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster10")] <- "iTEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster11")] <- "iTEC.4"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster9")] <- "cTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster13")] <- "cTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster23")] <- "eTEC1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster8")] <- "New.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster21")] <- "New.TEC.2"
+
+zsg.volc.p <- ggplot(thymus.res, aes(x=logFC, y=-log10(FDR), fill=Sig)) +
+  geom_point(shape=21, size=3) +
+  theme_mike() +
+  labs(x="log fold change", y=expression(bold(paste("-log"[10], " FDR")))) +
+  scale_fill_manual(values=c("black", "firebrick1")) +
+  scale_x_continuous(limits=c(-axis.max, axis.max))
+
+ggsave(zsg.volc.p,
+       filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_ageOnly-volcano.pdf",
+       height=4.15, width=3.75, useDingbats=FALSE)
+```
+
+
+```{r}
+zsg.clust.props <- apply(zsg.clust.mat, 2, FUN=function(X) X/sum(X))
+clust.prop.df <- melt(zsg.clust.props)
+colnames(clust.prop.df) <- c("ZsG.Cluster", "Sample", "Freq")
+clust.prop.df$Sample <- as.character(clust.prop.df$Sample)
+clust.prop.df$Age <- unlist(lapply(strsplit(clust.prop.df$Sample, fixed=TRUE, split="_"), FUN=function(X) paste0(X[1])))
+clust.prop.df$Age <- factor(clust.prop.df$Age,
+                            levels=c("Wk1", "Wk4", "Wk16"),
+                            labels=c("Wk1", "Wk4", "Wk16"))
+clust.prop.df$Rep <- unlist(lapply(strsplit(clust.prop.df$Sample, fixed=TRUE, split="_"), FUN=function(X) paste0(X[3])))
+
+zsg.cols <- c("#8745b5", "#13cf00")
+names(zsg.cols) <- c("ZsGn", "ZsGp")
+
+age.cols <- viridis(option="magma", n=5)
+names(age.cols) <- c("Wk1", "Wk4", "Wk16", "32wk", "52wk")
+```
+
+
+```{r}
+# add interpretations to the clusters
+clust.prop.df$TECtype <- "Unknown"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster1")] <- "mTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster3")] <- "mTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster14")] <- "mTEC.3"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster6")] <- "mTEC.4"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster20")] <- "mTEC.5"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster22")] <- "mTEC.6"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster16")] <- "mTEC.7"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster4")] <- "iTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster7")] <- "iTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster10")] <- "iTEC.3"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster11")] <- "iTEC.4"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster9")] <- "cTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster13")] <- "cTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster23")] <- "eTEC1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster8")] <- "New.TEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster21")] <- "New.TEC.2"
+
+age.fdr.p <- ggplot(clust.prop.df[clust.prop.df$ZsG.Cluster %in% thymus.res[is.sig, ]$Cluster, ],
+                    aes(x=Age, y=Freq, fill=Age)) +
+  stat_summary(fun.y=median, fun.ymin=median, fun.ymax=median,
+               geom="crossbar", width=0.5) +
+  geom_jitter(shape=21, size=2.5, position=position_jitterdodge(jitter.width=0.1)) +
+  theme_mike() +
+  scale_fill_manual(values=age.cols) +
+  facet_wrap(~TECtype, scales="free") +
+  labs(x="Age", y="Proportion") +
+  expand_limits(y=c(0)) +
+  NULL
+
+ggsave(age.fdr.p,
+       filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_ageOnly-jitter.pdf",
+       height=6.75, width=7.75, useDingbats=FALSE)
+
+age.fdr.p
+```
+
+
+```{r}
+# add interpretations to the clusters
+thymus.res$TECtype <- "Unknown"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster1")] <- "mTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster3")] <- "mTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster14")] <- "mTEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster6")] <- "mTEC.4"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster20")] <- "mTEC.5"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster22")] <- "mTEC.6"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster16")] <- "mTEC.7"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster4")] <- "iTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster7")] <- "iTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster10")] <- "iTEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster11")] <- "iTEC.4"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster9")] <- "cTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster13")] <- "cTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster23")] <- "eTEC1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster8")] <- "New.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster21")] <- "New.TEC.2"
+
+write.table(thymus.res,
+            file="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_ageOnly.tsv",
+            sep="\t", row.names=FALSE, quote=FALSE)
+```
+
+
+
+The second analysis needs to account for the ascertainment bias between ZsG+/- populations
+
+```{r}
+cluster.table <- as.data.frame(xtabs(~ ZsG.Cluster + Age + CellOrigin + SortType, data=zsg.meta))
+```
+
+```{r}
+# cast into square matrix format to make normalisation easier
+zsg.clust.mat <- dcast(cluster.table, ZsG.Cluster ~ Age + CellOrigin + SortType, value.var='Freq')
+rownames(zsg.clust.mat) <- paste0("Cluster", zsg.clust.mat$ZsG.Cluster)
+```
+
+```{r}
+ab.samps <- colnames(zsg.clust.mat)[-1]
+ab.ages <- unlist(lapply(strsplit(ab.samps, fixed=TRUE, split="_"), FUN=function(X) paste0(X[1])))
+ab.sort <- unlist(lapply(strsplit(ab.samps, fixed=TRUE, split="_"), FUN=function(X) paste0(X[3])))
+ab.hto <- unlist(lapply(strsplit(ab.samps, fixed=TRUE, split="_"), FUN=function(X) paste0(X[2])))
+
+counts.meta <- data.frame("Sample"=ab.samps, "Age"=ab.ages, "Sort"=ab.sort, "Rep"=ab.hto)
+counts.meta$Sample <- as.character(counts.meta$Sample)
+counts.meta$Age <- factor(counts.meta$Age,
+                          levels=c("Wk1", "Wk4", "Wk16"),
+                          labels=c("Wk1", "Wk4", "Wk16"))
+rownames(counts.meta) <- counts.meta$Sample
+counts.meta$AgeInt <- as.numeric(gsub(as.character(counts.meta$Age), patter="Wk", replacement=""))
+counts.meta$AgeInt <- ordered(counts.meta$AgeInt)
+
+# remove columns with 0 sum
+zsg.clust.mat <- zsg.clust.mat[, -1]
+zsg.clust.mat <- zsg.clust.mat[, colSums(zsg.clust.mat)  > 0]
+
+```
+
+Can I rescale the proportions based on the sampling bias as we expect them to have a uniform sampling?  If we know what the bias is, we should be able to correct it - I can 
+downsample the ZsG+ samples to  the same total counts as the ZsG-
+
+```{r}
+prop.1st <- table(zsg.meta$SortType[grepl(zsg.meta$Rep, pattern="1st")])[1]/table(zsg.meta$SortType[grepl(zsg.meta$Rep, pattern="1st")])[2]
+prop.2nd.run1 <- table(zsg.meta$SortType[grepl(zsg.meta$CellOrigin, pattern="2ndRun1")])[1]/table(zsg.meta$SortType[grepl(zsg.meta$CellOrigin, pattern="2ndRun1")])[2]
+prop.2nd.run2 <- table(zsg.meta$SortType[grepl(zsg.meta$CellOrigin, pattern="2ndRun2")])[1]/table(zsg.meta$SortType[grepl(zsg.meta$CellOrigin, pattern="2ndRun2")])[2]
+prop.3rd.run1 <- table(zsg.meta$SortType[grepl(zsg.meta$CellOrigin, pattern="3rdRun1")])[1]/table(zsg.meta$SortType[grepl(zsg.meta$CellOrigin, pattern="3rdRun1")])[2]
+prop.3rd.run2 <- table(zsg.meta$SortType[grepl(zsg.meta$CellOrigin, pattern="3rdRun2")])[1]/table(zsg.meta$SortType[grepl(zsg.meta$CellOrigin, pattern="3rdRun2")])[2]
+
+# I'll rescale the model offset to adjust for these proportions
+zsg.sort.props <- c(prop.1st, 1, 1, prop.2nd.run1, 1, prop.2nd.run2, 1, prop.3rd.run1, 1, prop.3rd.run2, 
+                    prop.1st, 1, 1, prop.2nd.run1, 1, prop.2nd.run2, 1, prop.3rd.run1, 1, prop.3rd.run2,
+                    prop.1st, 1, 1, prop.2nd.run1, 1, prop.2nd.run2, 1, prop.3rd.run1, 1, prop.3rd.run2)
+names(zsg.sort.props) <- colnames(zsg.clust.mat)
+
+### downsample the ZsG+ samples
+zsg.down <- downsampleMatrix(as.matrix(zsg.clust.mat), prop=zsg.sort.props, bycol=TRUE)
+```
+
+Do DA testing with edgeR.
+
+```{r}
+thymus.dge <- DGEList(zsg.down, lib.size=colSums(zsg.down))
+#thymus.dge$offset <- zsg.sort.props
+
+thymus.design <- model.matrix(~ AgeInt, data=counts.meta[colnames(zsg.down), ])
+thymus.dge <- estimateDisp(thymus.dge, thymus.design, trend="none")
+thymus.fit <- glmQLFit(thymus.dge, thymus.design, robust=TRUE, abundance.trend=FALSE)
+thymus.res <- as.data.frame(topTags(glmQLFTest(thymus.fit, coef=2), n=Inf))
+thymus.res$Sig <- as.factor(as.numeric(thymus.res$FDR <= 0.05))
+thymus.res$Cluster <- rownames(thymus.res)
+
+# control the spatial FDR
+qvals <- thymus.res$FDR
+is.sig <- qvals <= 0.05
+summary(is.sig)
+```
+
+
+```{r}
+zsg.clust.props <- t(apply(zsg.down, 1, FUN=function(X) X/sum(X)))
+clust.prop.df <- melt(zsg.clust.props)
+colnames(clust.prop.df) <- c("ZsG.Cluster", "Sample", "Freq")
+clust.prop.df$Sample <- as.character(clust.prop.df$Sample)
+clust.prop.df$Age <- unlist(lapply(strsplit(clust.prop.df$Sample, fixed=TRUE, split="_"), FUN=function(X) paste0(X[1])))
+clust.prop.df$Age <- factor(clust.prop.df$Age,
+                            levels=c("Wk1", "Wk4", "Wk16"),
+                            labels=c("Wk1", "Wk4", "Wk16"))
+clust.prop.df$Sort <- unlist(lapply(strsplit(clust.prop.df$Sample, fixed=TRUE, split="_"), FUN=function(X) paste0(X[3])))
+clust.prop.df$Rep <- unlist(lapply(strsplit(clust.prop.df$Sample, fixed=TRUE, split="_"), FUN=function(X) paste0(X[2])))
+
+zsg.cols <- c("#8745b5", "#13cf00")
+names(zsg.cols) <- c("ZsGn", "ZsGp")
+```
+
+
+```{r}
+# add interpretations to the clusters
+clust.prop.df$TECtype <- "Unknown"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster1")] <- "mTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster3")] <- "mTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster14")] <- "mTEC.3"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster6")] <- "mTEC.4"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster20")] <- "mTEC.5"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster22")] <- "mTEC.6"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster16")] <- "mTEC.7"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster4")] <- "iTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster7")] <- "iTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster10")] <- "iTEC.3"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster11")] <- "iTEC.4"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster9")] <- "cTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster13")] <- "cTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster23")] <- "eTEC1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster8")] <- "New.TEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster21")] <- "New.TEC.2"
+
+fdr.p  <- ggplot(clust.prop.df[clust.prop.df$ZsG.Cluster %in% thymus.res[is.sig, ]$Cluster, ],
+       aes(x=Age, y=Freq)) +
+  stat_summary(fun.y=median, fun.ymin=median, fun.ymax=median,
+               geom="crossbar", width=0.5) +
+  geom_jitter(shape=21, size=2.5, fill='grey80',
+              position=position_jitter(width=0.1)) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cols) +
+  facet_wrap(~TECtype, scales="free") +
+  expand_limits(y=c(0)) +
+  labs(x="Age", y="Proportion") +
+  NULL
+
+ggsave(fdr.p,
+       filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_Downsample_byAge-jitter.pdf",
+       height=9.75, width=11.75, useDingbats=FALSE)
+
+fdr.p
+```
+
+
+```{r}
+fdr.p  <- ggplot(clust.prop.df[clust.prop.df$ZsG.Cluster %in% thymus.res[is.sig, ]$Cluster, ],
+                 aes(x=Age, y=Freq, fill=Sort)) +
+  stat_summary(fun.y=median, fun.ymin=median, fun.ymax=median,
+               geom="crossbar", width=0.5) +
+  geom_jitter(shape=21, size=2.5,
+              position=position_jitterdodge(jitter.width=0.1)) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cols) +
+  facet_wrap(~TECtype, scales="free") +
+  expand_limits(y=c(0)) +
+  labs(x="Age", y="Proportion") +
+  NULL
+
+ggsave(fdr.p,
+       filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_Downsample_byAge_ZsG-jitter.pdf",
+       height=9.75, width=11.75, useDingbats=FALSE)
+```
+
+
+```{r}
+# add interpretations to the clusters
+thymus.res$TECtype <- "Unknown"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster1")] <- "mTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster3")] <- "mTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster14")] <- "mTEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster6")] <- "mTEC.4"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster20")] <- "mTEC.5"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster22")] <- "mTEC.6"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster16")] <- "mTEC.7"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster4")] <- "iTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster7")] <- "iTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster10")] <- "iTEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster11")] <- "iTEC.4"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster9")] <- "cTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster13")] <- "cTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster23")] <- "eTEC1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster8")] <- "New.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster21")] <- "New.TEC.2"
+
+write.table(thymus.res,
+            file="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_Downsample_byAge_ZsG.tsv",
+            sep="\t", row.names=FALSE, quote=FALSE)
+```
+
+
+Adjust for ZsG +/-.
+
+```{r}
+# do DA testing with edgeR
+thymus.dge <- DGEList(zsg.down, lib.size=colSums(zsg.down))
+#thymus.dge$offset <- zsg.sort.props
+
+thymus.design <- model.matrix(~ AgeInt + Sort, data=counts.meta[colnames(zsg.down), ])
+thymus.dge <- estimateDisp(thymus.dge, thymus.design, trend="none")
+thymus.fit <- glmQLFit(thymus.dge, thymus.design, robust=TRUE, abundance.trend=FALSE)
+thymus.res <- as.data.frame(topTags(glmQLFTest(thymus.fit, coef=4), n=Inf))
+thymus.res$Sig <- as.factor(as.numeric(thymus.res$FDR <= 0.05))
+thymus.res$Cluster <- rownames(thymus.res)
+
+# control the spatial FDR
+qvals <- thymus.res$FDR
+is.sig <- qvals <= 0.05
+summary(is.sig)
+```
+
+
+```{r}
+eps <- max(abs(thymus.res$logFC))
+axis.max <- eps + (eps*0.1)
+
+zsg.clust.props <- apply(zsg.down, 2, FUN=function(X) X/sum(X))
+clust.prop.df <- melt(zsg.clust.props)
+colnames(clust.prop.df) <- c("ZsG.Cluster", "Sample", "Freq")
+clust.prop.df$Sample <- as.character(clust.prop.df$Sample)
+clust.prop.df$Age <- unlist(lapply(strsplit(clust.prop.df$Sample, fixed=TRUE, split="_"), FUN=function(X) paste0(X[1])))
+clust.prop.df$Age <- factor(clust.prop.df$Age,
+                            levels=c("Wk1", "Wk4", "Wk16"),
+                            labels=c("Wk1", "Wk4", "Wk16"))
+clust.prop.df$Sort <- unlist(lapply(strsplit(clust.prop.df$Sample, fixed=TRUE, split="_"), FUN=function(X) paste0(X[3])))
+clust.prop.df$Rep <- unlist(lapply(strsplit(clust.prop.df$Sample, fixed=TRUE, split="_"), FUN=function(X) paste0(X[2])))
+
+zsg.cols <- c("#8745b5", "#13cf00")
+names(zsg.cols) <- c("ZsGn", "ZsGp")
+
+# add interpretations to the clusters
+clust.prop.df$TECtype <- "Unknown"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster1")] <- "mTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster3")] <- "mTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster14")] <- "mTEC.3"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster6")] <- "mTEC.4"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster20")] <- "mTEC.5"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster22")] <- "mTEC.6"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster16")] <- "mTEC.7"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster4")] <- "iTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster7")] <- "iTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster10")] <- "iTEC.3"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster11")] <- "iTEC.4"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster9")] <- "cTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster13")] <- "cTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster23")] <- "eTEC1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster8")] <- "New.TEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster21")] <- "New.TEC.2"
+
+clust.prop.df$Sort <- factor(clust.prop.df$Sort,
+                             levels=c("ZsGn", "ZsGp"),
+                             labels=c("ZsG-", "ZsG+"))
+
+zsg.cols <- c("#8745b5", "#13cf00")
+names(zsg.cols) <- c("ZsG-", "ZsG+")
+
+weighted.fdr.p <- ggplot(clust.prop.df[clust.prop.df$ZsG.Cluster %in% thymus.res[is.sig, ]$Cluster, ],
+       aes(x=Sort, y=Freq, fill=Sort)) +
+  stat_summary(fun.y=median, fun.ymin=median, fun.ymax=median,
+               geom="crossbar", width=0.5) +
+  geom_jitter(shape=21, size=2, position=position_jitterdodge(jitter.width=0.1)) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cols) +
+  facet_wrap(~TECtype, scales="free") +
+  expand_limits(y=c(0)) +
+  labs(x="Sort Fraction", y="Proportion") +
+  NULL
+
+ggsave(weighted.fdr.p,
+       filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_Downsample_byZsG-jitter.pdf",
+       height=9.75, width=11.75, useDingbats=FALSE)
+
+weighted.fdr.p
+```
+
+Just need the cTEC proportions to demonstrate this model works
+
+```{r}
+ctec.fdr.p <- ggplot(clust.prop.df[clust.prop.df$ZsG.Cluster %in% thymus.res[is.sig, ]$Cluster & 
+                                     grepl(clust.prop.df$TECtype, pattern="cTEC"), ],
+                         aes(x=Sort, y=Freq, fill=Sort)) +
+  stat_summary(fun.y=median, fun.ymin=median, fun.ymax=median,
+               geom="crossbar", width=0.5) +
+  geom_jitter(shape=21, size=2, position=position_jitterdodge(jitter.width=0.1)) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cols) +
+  facet_wrap(~TECtype, scales="free") +
+  expand_limits(y=c(0)) +
+  labs(x="Sort Fraction", y="Proportion") +
+  NULL
+
+ggsave(ctec.fdr.p,
+       filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance-cTEC_Downsample_byZsG-jitter.pdf",
+       height=4.75, width=6.75, useDingbats=FALSE)
+
+ctec.fdr.p
+```
+
+
+```{r}
+# add interpretations to the clusters
+thymus.res$TECtype <- "Unknown"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster1")] <- "mTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster3")] <- "mTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster14")] <- "mTEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster6")] <- "mTEC.4"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster20")] <- "mTEC.5"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster22")] <- "mTEC.6"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster16")] <- "mTEC.7"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster4")] <- "iTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster7")] <- "iTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster10")] <- "iTEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster11")] <- "iTEC.4"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster9")] <- "cTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster13")] <- "cTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster23")] <- "eTEC1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster8")] <- "New.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster21")] <- "New.TEC.2"
+
+write.table(thymus.res,
+            file="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_Downsample_byZsG.tsv",
+            sep="\t", row.names=FALSE, quote=FALSE)
+```
+
+
+```{r}
+# label the top and bottom 5 DA clusters
+thymus.res$Label <- thymus.res$TECtype
+#top.clust <- thymus.res$Cluster[order(thymus.res$logFC, decreasing=TRUE)][1:5]
+#bottom.clust <- thymus.res$Cluster[order(thymus.res$logFC, decreasing=FALSE)][1:5]
+#thymus.res$Label[!thymus.res$Cluster %in% c(top.clust, bottom.clust)] <- ""
+thymus.res$Label[thymus.res$Sig == 0] <- ""
+
+zsg.volc.p <- ggplot(thymus.res, aes(x=logFC, y=-log10(FDR), fill=Sig)) +
+  geom_point(shape=21, size=3) +
+  theme_mike() +
+  labs(x="log fold change", y=expression(bold(paste("-log"[10], " FDR")))) +
+  scale_fill_manual(values=c("black", "firebrick1")) +
+  scale_x_continuous(limits=c(-axis.max, axis.max)) +
+  geom_label_repel(mapping=aes(label=Label),
+                   fill='white')
+
+ggsave(zsg.volc.p,
+       filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_Downsample_byZsG-volcano.pdf",
+       height=5.15, width=5.75, useDingbats=FALSE)
+
+zsg.volc.p
+```
+
+
+The next analysis needs to account for the ascertainment bias between ZsG+/- populations count clusters, I'll include the sorting population as a covariate.
+
+```{r}
+# do DA testing with edgeR
+thymus.dge <- DGEList(zsg.down, lib.size=colSums(zsg.down))
+
+thymus.design <- model.matrix(~ AgeInt + Sort, data=counts.meta[colnames(zsg.down), ])
+thymus.dge <- estimateDisp(thymus.dge, thymus.design, trend="none")
+thymus.fit <- glmQLFit(thymus.dge, thymus.design, robust=TRUE, abundance.trend=FALSE)
+thymus.res <- as.data.frame(topTags(glmQLFTest(thymus.fit, coef=2), n=Inf))
+thymus.res$Sig <- as.factor(as.numeric(thymus.res$FDR <= 0.05))
+thymus.res$Cluster <- rownames(thymus.res)
+
+# control the FDR
+qvals <- thymus.res$FDR
+is.sig <- qvals <= 0.05
+summary(is.sig)
+```
+
+
+```{r}
+zsg.clust.props <- apply(zsg.down, 2, FUN=function(X) X/sum(X))
+clust.prop.df <- melt(zsg.clust.props)
+colnames(clust.prop.df) <- c("ZsG.Cluster", "Sample", "Freq")
+clust.prop.df$Sample <- as.character(clust.prop.df$Sample)
+clust.prop.df$Age <- unlist(lapply(strsplit(clust.prop.df$Sample, fixed=TRUE, split="_"), FUN=function(X) paste0(X[1])))
+clust.prop.df$Age <- factor(clust.prop.df$Age,
+                            levels=c("Wk1", "Wk4", "Wk16"),
+                            labels=c("Wk1", "Wk4", "Wk16"))
+clust.prop.df$Sort <- unlist(lapply(strsplit(clust.prop.df$Sample, fixed=TRUE, split="_"), FUN=function(X) paste0(X[3])))
+clust.prop.df$Rep <- unlist(lapply(strsplit(clust.prop.df$Sample, fixed=TRUE, split="_"), FUN=function(X) paste0(X[2])))
+```
+
+
+```{r}
+# add interpretations to the clusters
+clust.prop.df$TECtype <- "Unknown"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster1")] <- "mTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster3")] <- "mTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster14")] <- "mTEC.3"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster6")] <- "mTEC.4"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster20")] <- "mTEC.5"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster22")] <- "mTEC.6"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster16")] <- "mTEC.7"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster4")] <- "iTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster7")] <- "iTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster10")] <- "iTEC.3"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster11")] <- "iTEC.4"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster9")] <- "cTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster13")] <- "cTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster23")] <- "eTEC1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster8")] <- "New.TEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster21")] <- "New.TEC.2"
+
+clust.prop.df$Sort <- factor(clust.prop.df$Sort,
+                             levels=c("ZsGn", "ZsGp"),
+                             labels=c("ZsG-", "ZsG+"))
+
+weighted.fdr.p <- ggplot(clust.prop.df[clust.prop.df$ZsG.Cluster %in% thymus.res[is.sig, ]$Cluster, ],
+                         aes(x=Age, y=Freq, fill=Sort)) +
+  stat_summary(fun.y=median, fun.ymin=median, fun.ymax=median,
+               geom="crossbar", width=0.5) +
+  geom_jitter(shape=21, size=2, position=position_jitterdodge(jitter.width=0.1)) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cols) +
+  facet_wrap(~TECtype, scales="free") +
+  labs(x="Age", y="Proportion") +
+  expand_limits(y=c(0)) +
+  NULL
+
+ggsave(weighted.fdr.p,
+       filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_Downsample_Age_adjustZsG-ZsG_jitter.pdf",
+       height=9.75, width=11.75, useDingbats=FALSE)
+
+weighted.fdr.p
+```
+
+
+```{r}
+weighted.fdr.p <- ggplot(clust.prop.df[clust.prop.df$ZsG.Cluster %in% thymus.res[is.sig, ]$Cluster, ],
+                         aes(x=Age, y=Freq)) +
+  stat_summary(fun.y=median, fun.ymin=median, fun.ymax=median,
+               geom="crossbar", width=0.5) +
+  geom_jitter(shape=21, size=2, fill='grey80', position=position_jitter(width=0.1)) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cols) +
+  facet_wrap(~TECtype, scales="free") +
+  labs(x="Age", y="Proportion") +
+  expand_limits(y=c(0)) +
+  NULL
+
+ggsave(weighted.fdr.p,
+       filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_Downsample_Age_adjustZsG-jitter.pdf",
+       height=9.75, width=11.75, useDingbats=FALSE)
+
+weighted.fdr.p
+```
+
+
+```{r}
+# add interpretations to the clusters
+thymus.res$TECtype <- "Unknown"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster1")] <- "mTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster3")] <- "mTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster14")] <- "mTEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster6")] <- "mTEC.4"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster20")] <- "mTEC.5"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster22")] <- "mTEC.6"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster16")] <- "mTEC.7"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster4")] <- "iTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster7")] <- "iTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster10")] <- "iTEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster11")] <- "iTEC.4"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster9")] <- "cTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster13")] <- "cTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster23")] <- "eTEC1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster8")] <- "New.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster21")] <- "New.TEC.2"
+
+write.table(thymus.res,
+            file="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_Downsample_Age_adjustZsG.tsv",
+            sep="\t", row.names=FALSE, quote=FALSE)
+```
+
+
+```{r}
+# label the top and bottom 5 DA clusters
+thymus.res$Label <- thymus.res$TECtype
+#top.clust <- thymus.res$Cluster[order(thymus.res$logFC, decreasing=TRUE)][1:5]
+#bottom.clust <- thymus.res$Cluster[order(thymus.res$logFC, decreasing=FALSE)][1:5]
+#thymus.res$Label[!thymus.res$Cluster %in% c(top.clust, bottom.clust)] <- ""
+thymus.res$Label[thymus.res$Sig == 0] <- ""
+
+zsg.volc.p <- ggplot(thymus.res, aes(x=logFC, y=-log10(FDR), fill=Sig)) +
+  geom_point(shape=21, size=3) +
+  theme_mike() +
+  labs(x="log fold change", y=expression(bold(paste("-log"[10], " FDR")))) +
+  scale_fill_manual(values=c("black", "firebrick1")) +
+  scale_x_continuous(limits=c(-axis.max, axis.max)) +
+  geom_label_repel(mapping=aes(label=Label),
+                   fill='white')
+
+ggsave(zsg.volc.p,
+       filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_Downsample_Age_adjustZsG-volcano.pdf",
+       height=5.15, width=5.75, useDingbats=FALSE)
+
+zsg.volc.p
+```
+
+Now I cant test the interaction between age and lineage traced populations do DA testing with edgeR
+
+```{r}
+thymus.dge <- DGEList(zsg.clust.mat, lib.size=zsg.sort.props*colSums(zsg.clust.mat))
+#thymus.dge$offset <- log(zsg.sort.offset)
+
+thymus.design <- model.matrix(~ AgeInt*Sort, data=counts.meta[colnames(zsg.clust.mat), ])
+colnames(thymus.design) <- gsub(colnames(thymus.design), pattern=":", replacement="_")
+thymus.dge <- estimateDisp(thymus.dge, thymus.design, trend="none")
+thymus.fit <- glmQLFit(thymus.dge, thymus.design, robust=TRUE, abundance.trend=FALSE)
+thymus.res <- as.data.frame(topTags(glmQLFTest(thymus.fit, coef=5), n=Inf))
+thymus.res$Sig <- as.factor(as.numeric(thymus.res$FDR <= 0.05))
+thymus.res$Cluster <- rownames(thymus.res)
+
+# control the FDR
+qvals <- thymus.res$FDR
+is.sig <- qvals <= 0.05
+summary(is.sig)
+```
+
+
+```{r, fig.height=11.75, fig.width=7.75}
+
+eps <- max(abs(thymus.res$logFC))
+axis.max <- eps + (eps*0.1)
+
+zsg.clust.props <- apply(zsg.down, 2, FUN=function(X) X/sum(X))
+clust.prop.df <- melt(zsg.clust.props)
+colnames(clust.prop.df) <- c("ZsG.Cluster", "Sample", "Freq")
+clust.prop.df$Sample <- as.character(clust.prop.df$Sample)
+clust.prop.df$Age <- unlist(lapply(strsplit(clust.prop.df$Sample, fixed=TRUE, split="_"), FUN=function(X) paste0(X[1])))
+clust.prop.df$Age <- factor(clust.prop.df$Age,
+                            levels=c("Wk1", "Wk4", "Wk16"),
+                            labels=c("Wk1", "Wk4", "Wk16"))
+clust.prop.df$Sort <- unlist(lapply(strsplit(clust.prop.df$Sample, fixed=TRUE, split="_"), FUN=function(X) paste0(X[3])))
+clust.prop.df$Rep <- unlist(lapply(strsplit(clust.prop.df$Sample, fixed=TRUE, split="_"), FUN=function(X) paste0(X[2])))
+
+
+# add interpretations to the clusters
+clust.prop.df$TECtype <- "Unknown"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster1")] <- "mTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster3")] <- "mTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster14")] <- "mTEC.3"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster6")] <- "mTEC.4"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster20")] <- "mTEC.5"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster22")] <- "mTEC.6"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster16")] <- "mTEC.7"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster4")] <- "Intertypical.TEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster7")] <- "Intertypical.TEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster10")] <- "Intertypical.TEC.3"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster11")] <- "Intertypical.TEC.4"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster9")] <- "cTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster13")] <- "cTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster23")] <- "eTEC1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster8")] <- "New.TEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster21")] <- "New.TEC.2"
+
+clust.prop.df$Sort <- factor(clust.prop.df$Sort,
+                             levels=c("ZsGn", "ZsG+"),
+                             labels=c("ZsG-", "ZsG+"))
+
+weighted.fdr.p <- ggplot(clust.prop.df[clust.prop.df$ZsG.Cluster %in% thymus.res[is.sig, ]$Cluster, ],
+                         aes(x=Age, y=Freq, fill=Sort)) +
+  stat_summary(fun.y=median, fun.ymin=median, fun.ymax=median,
+               geom="crossbar", width=0.5) +
+  geom_jitter(shape=21, size=3, position=position_jitterdodge(jitter.width=0.1)) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cols) +
+  facet_wrap(~TECtype, scales="free", ncol=2) +
+  expand_limits(y=c(0)) +
+  theme(strip.background=element_rect(fill='white', colour='white'),
+        strip.text=element_text(size=24),
+        axis.title=element_text(size=18),
+        axis.text=element_text(size=18),
+        legend.text=element_text(size=18)) +
+  labs(x="Age", y="Proportion") +
+  guides(fill=guide_legend(title="ZsGreen Fraction")) +
+  NULL
+
+ggsave(weighted.fdr.p,
+       filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_Downsample_ZsG_interaction-jitter.pdf",
+       height=11.75, width=7.75, useDingbats=FALSE)
+
+weighted.fdr.p
+```
+
+
+```{r, fig.height=11.75, fig.width=7.75}
+weighted.fdr.p <- ggplot(clust.prop.df,
+                         aes(x=Age, y=Freq, fill=Sort)) +
+  stat_summary(fun.y=median, fun.ymin=median, fun.ymax=median,
+               geom="crossbar", width=0.5) +
+  geom_jitter(shape=21, size=3, position=position_jitterdodge(jitter.width=0.1)) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cols) +
+  facet_wrap(~TECtype, scales="free", ncol=2) +
+  expand_limits(y=c(0)) +
+  theme(strip.background=element_rect(fill='white', colour='white'),
+        strip.text=element_text(size=24),
+        axis.title=element_text(size=18),
+        axis.text=element_text(size=18),
+        legend.text=element_text(size=18)) +
+  labs(x="Age", y="Proportion") +
+  guides(fill=guide_legend(title="ZsGreen Fraction")) +
+  NULL
+
+ggsave(weighted.fdr.p,
+       filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_Downsample_All_interaction-jitter.pdf",
+       height=11.75, width=7.75, useDingbats=FALSE)
+
+weighted.fdr.p
+```
+
+
+```{r}
+# add interpretations to the clusters
+thymus.res$TECtype <- "Unknown"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster1")] <- "mTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster3")] <- "mTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster14")] <- "mTEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster6")] <- "mTEC.4"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster20")] <- "mTEC.5"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster22")] <- "mTEC.6"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster16")] <- "mTEC.7"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster4")] <- "Intertypical.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster7")] <- "Intertypical.TEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster10")] <- "Intertypical.TEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster11")] <- "Intertypical.TEC.4"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster9")] <- "cTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster13")] <- "cTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster23")] <- "eTEC1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster8")] <- "New.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster21")] <- "New.TEC.2"
+
+write.table(thymus.res,
+            file="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_Downsample_ZsG_interaction.tsv",
+            sep="\t", row.names=FALSE, quote=FALSE)
+
+
+# label the top and bottom 5 DA clusters
+thymus.res$Label <- thymus.res$TECtype
+#top.clust <- thymus.res$Cluster[order(thymus.res$logFC, decreasing=TRUE)][1:3]
+#bottom.clust <- thymus.res$Cluster[order(thymus.res$logFC, decreasing=FALSE)][1:3]
+# thymus.res$Label[!thymus.res$Cluster %in% c(top.clust, bottom.clust)] <- ""
+thymus.res$Label[thymus.res$Sig == 0] <- ""
+
+zsg.volc.p <- ggplot(thymus.res, aes(x=logFC, y=-log10(FDR), fill=Sig)) +
+  geom_point(shape=21, size=4) +
+  theme_mike() +
+  labs(x="LFC", y=expression(bold(paste("-log"[10], " FDR")))) +
+  scale_fill_manual(values=c("black", "firebrick1")) +
+  scale_x_continuous(limits=c(-axis.max, axis.max)) +
+  geom_label_repel(mapping=aes(label=Label),
+                  size=5.5,
+                  nudge_x=0.2,
+                  nudge_y=0.5,
+                  fill='white') +
+  guides(fill=FALSE) +
+  NULL
+
+ggsave(zsg.volc.p,
+       filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_Downsample_ZsG_interaction-volcano.pdf",
+       height=5.55, width=5.55, useDingbats=FALSE)
+
+zsg.volc.p
+```
+
+
+
+
+
+
+
+
+
+
