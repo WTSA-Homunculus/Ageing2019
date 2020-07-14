@@ -1,0 +1,744 @@
+---
+title: "Thymus ZsG 10X: Subsample analysis"
+output: NA
+---
+
+# Introduction
+
+I've now run the separate graph-construction, clustering, etc on the full 69,000 QC'd single cells. I'll do the visualisations here.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+library(ggplot2)
+library(scales)
+library(biomaRt)
+library(ggrepel)
+library(scran)
+library(irlba)
+library(stringr)
+library(igraph)
+library(ggrepel)
+library(reshape2)
+library(umap)
+library(pheatmap)
+library(ComplexHeatmap)
+library(viridis)
+library(FNN)
+library(cowplot)
+library(batchelor)
+library(schex)
+library(ggrastr)
+library(cydar)
+library(edgeR)
+library(RColorBrewer)
+library(destiny)
+source("~/Dropbox/R_sessions/SingleCellFunctions/single_cell_functions.R")
+source("~/Dropbox/R_sessions/GGMike/theme_mike.R")
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+gene.df <- read.table("~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ZsG_genes-biomart.tsv",
+                      sep="\t", header=TRUE, stringsAsFactors=FALSE)
+rownames(gene.df) <- gene.df$ensembl_gene_id
+```
+
+I tested for HVGs with FDR $\lt 10^{-7}$.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+zsg.hvg <- read.table("~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ZsG_HVGs.tsv",
+                      sep="\t", header=TRUE, stringsAsFactors=FALSE)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+zsg.meta <- read.table("~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ZsG_GOI_metadata.tsv",
+                       sep="\t", header=TRUE, stringsAsFactors=FALSE)
+
+n.clusters <- length(unique(zsg.meta$ZsG.Cluster))
+zsg.meta$ZsG.Cluster <- factor(zsg.meta$ZsG.Cluster,
+                               levels=c(1:n.clusters),
+                               labels=c(1:n.clusters))
+
+zsg.meta$Age <- factor(zsg.meta$Age,
+                               levels=c("Wk1", "Wk4", "Wk16"),
+                               labels=c("Wk1", "Wk4", "Wk16"))
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# I should use the same number of PCs as I did for the SNN-graph and clustering to make them concordant.
+zsg.pcs <- read.table("~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ZsG_PCs.tsv",
+                      sep="\t", header=TRUE, stringsAsFactor=FALSE)
+rownames(zsg.pcs) <- zsg.pcs$Sample
+n.dim <- 20
+zsg.pcs.meta <- merge(zsg.meta, zsg.pcs, by='Sample')
+```
+
+
+Firstly, how many clusters do we find, and how are they distributed across the experimental samples and SNN-graph.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+table(zsg.meta$ZsG.Cluster)
+```
+
+There are 24 clusters - as with the sub-sample analysis I would not be surprised if we need to merge these to get biologically coherent TEC subtypes.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+zsg.cluster.cols <- c("#3E89BE", "#fdb462", "#7fc97f","#ef3b2c","#662506",
+                     "#a6cee3","#fb9a99","#984ea3", "#ffff33", "#b2df8a",
+                     "#006FFF", "#CA834E", "#518A87", "#5B113C", "#55813B",
+                     "#E704C4", "#DDAEA2",  "#77837F", "#b15928",
+                     "#4A1930", "#E8C282", "#E7DBBC", 
+                     "#A68486", "#7900D7", "#A77500", "#6367A9", "#A05837", "#6B002C", "#772600", "#D790FF", "#9B9700",
+                    "#549E79", "#FFF69F", "#201625", "#72418F", "#BC23FF", "#99ADC0", "#3A2465", "#922329",
+                    "#5B4534", "#FDE8DC", "#404E55", "#0089A3", "#CB7E98", "#A4E804", "#324E72", "#6A3A4C",
+                    "#83AB58", "#001C1E", "#D1F7CE", "#004B28", "#C8D0F6", "#A3A489", "#806C66", "#222800",
+                    "#BF5650", "#E83000", "#66796D", "#DA007C", "#FF1A59", "#8ADBB4", "#1E0200", "#5B4E51",
+                    "#C895C5", "#320033", "#FF6832", "#66E1D3", "#CFCDAC", "#D0AC94", "#7ED379", "#012C58",
+                    "#7A7BFF", "#D68E01", "#353339", "#78AFA1", "#FEB2C6", "#75797C", "#837393", "#943A4D",
+                    "#B5F4FF", "#D2DCD5", "#9556BD", "#6A714A", "#001325", "#02525F", "#0AA3F7", "#E98176",
+                    "#DBD5DD", "#5EBCD1", "#3D4F44", "#7E6405", "#02684E", "#962B75", "#8D8546", "#9695C5",
+                    "#E773CE", "#D86A78", "#3E89BE", "#CA834E", "#518A87", "#5B113C", "#55813B", "#E704C4",
+                    "#00005F", "#A97399", "#4B8160", "#59738A", "#FF5DA7", "#F7C9BF", "#643127", "#513A01",
+                    "#6B94AA", "#51A058", "#A45B02", "#1D1702", "#E20027", "#E7AB63", "#4C6001", "#9C6966",
+                    "#64547B", "#97979E", "#006A66", "#391406", "#F4D749", "#0045D2", "#006C31", "#DDB6D0",
+                    "#7C6571", "#9FB2A4", "#00D891", "#15A08A", "#BC65E9", "#FFFFFE", "#C6DC99", "#203B3C",
+                    "#671190", "#6B3A64", "#F5E1FF", "#FFA0F2", "#CCAA35", "#374527", "#8BB400", "#797868",
+                    "#C6005A", "#3B000A", "#C86240", "#29607C", "#402334", "#7D5A44", "#CCB87C", "#B88183",
+                    "#AA5199", "#B5D6C3", "#A38469", "#9F94F0", "#A74571", "#B894A6", "#71BB8C", "#00B433",
+                    "#789EC9", "#6D80BA", "#953F00", "#5EFF03", "#E4FFFC", "#1BE177", "#BCB1E5", "#76912F",
+                    "#003109", "#0060CD", "#D20096", "#895563", "#29201D", "#5B3213", "#A76F42", "#89412E",
+                    "#1A3A2A", "#494B5A", "#A88C85", "#F4ABAA", "#A3F3AB", "#00C6C8", "#EA8B66", "#958A9F",
+                    "#BDC9D2", "#9FA064", "#BE4700", "#658188", "#83A485", "#453C23", "#47675D", "#3A3F00",
+                    "#061203", "#DFFB71", "#868E7E", "#98D058", "#6C8F7D", "#D7BFC2", "#3C3E6E", "#D83D66",
+                    "#2F5D9B", "#6C5E46", "#D25B88", "#5B656C", "#00B57F", "#545C46", "#866097", "#365D25",
+                    "#252F99", "#00CCFF", "#674E60", "#FC009C", "#92896B", "#1E2324", "#DEC9B2", "#9D4948")
+#n.clusters <- length(levels(dtr.clusters))
+zsg.cluster.cols <- zsg.cluster.cols[c(1:n.clusters)]
+names(zsg.cluster.cols) <- levels(zsg.meta$ZsG.Cluster)
+
+zsg.cols <- c("#8745b5", "#13cf00")
+names(zsg.cols) <- c("ZsGn", "ZsGp")
+
+age.cols <- viridis(option="magma", n=5)
+names(age.cols) <- c("Wk1", "Wk4", "Wk16", "32wk", "52wk")
+```
+
+
+## UMAP
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+set.seed(42)
+tec.umap <-  umap(as.matrix(zsg.pcs.meta[, paste0("PC", 1:20)]),
+                  n_components=2,
+                  n_neighbors=21, metric='euclidean',
+                  init='spectral', min_dist=0.1)
+
+tec.umap.df <- as.data.frame(tec.umap$layout)
+colnames(tec.umap.df) <- c("UMAP.1", "UMAP.2")
+tec.umap.df$Sample <- zsg.pcs.meta$Sample
+
+tec.umap.merge <- merge(zsg.pcs.meta, tec.umap.df, by='Sample')
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=7.75, fig.width=14.75}
+tec.umap.merge$AgeFactor <- factor(tec.umap.merge$Age,
+                                   levels=c("Wk1", "Wk4", "Wk16"),
+                                   labels=c("Week 1", "Week 4", "Week 16"))
+
+ggplot(tec.umap.merge, aes(x=UMAP.1, y=UMAP.2)) +
+  geom_point(data=tec.umap.merge[,c("UMAP.1", "UMAP.2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=ZsG.Cluster), shape=21, size=1.8) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cluster.cols) +
+  #scale_fill_viridis() +
+  facet_wrap(~AgeFactor, ncol=4) +
+  theme(strip.background=element_rect(fill='white', colour='white'),
+        strip.text=element_text(size=16)) +
+  guides(fill=guide_legend(title="TEC.Cluster", nrow=3, title.theme=element_text(size=14),
+                           override.aes=list(shape=22, size=4))) +
+  NULL
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=15.75, fig.width=14.75}
+ggplot(tec.umap.merge, aes(x=UMAP.1, y=UMAP.2)) +
+  geom_point(data=tec.umap.merge[,c("UMAP.1", "UMAP.2")], 
+             fill='grey80', size=1, alpha=0.3, colour='grey80', shape=21) +
+  geom_point(aes(fill=ZsG.Cluster), shape=21, size=1.8) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cluster.cols) +
+  #scale_fill_viridis() +
+  facet_wrap(~ZsG.Cluster, ncol=4) +
+  guides(fill=guide_legend(title="Cluster", title.theme=element_text(size=14),
+                           override.aes=list(shape=22, size=4))) +
+  NULL
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# add interpretations to the clusters
+tec.umap.merge$TECtype <- "Unknown"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(1)] <- "mTEC.1"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(3)] <- "mTEC.2"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(14)] <- "mTEC.3"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(6)] <- "mTEC.4"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(20)] <- "mTEC.5"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(22)] <- "mTEC.6"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(16)] <- "mTEC.7"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(4)] <- "Intertypical.TEC.1"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(7)] <- "Intertypical.TEC.2"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(10)] <- "Intertypical.TEC.3"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(11)] <- "Intertypical.TEC.4"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(9)] <- "cTEC.1"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(13)] <- "cTEC.2"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(17)] <- "PostAire.mTEC.1"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(19)] <- "PostAire.mTEC.2"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(23)] <- "eTEC1"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(24)] <- "Prolif.TEC.1"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(12)] <- "Prolif.TEC.2"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(2)] <- "Prolif.TEC.3"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(15)] <- "Tuft.mTEC.1"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(18)] <- "Tuft.mTEC.2"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(5)] <- "Sca1.TEC.1"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(8)] <- "New.TEC.1"
+tec.umap.merge$TECtype[tec.umap.merge$ZsG.Cluster %in% c(21)] <- "New.TEC.2"
+
+# use variations on the original ageing cluster colour scheme
+inter.cols <- c("#9970ab", "#a28aac", "#35978f", "#4dd7cc", "#2d8179", "#63b9b2",
+                "#B0cdc1", "#99b2a7", "#762a83", "#561f60", "#01665e", "#1f625d", "#014944",
+                "#e7d4e8", "#e9e5e9", "#d5c5d5", "#dfbfdf", "#c59cc5", "#dea6de", "#f8cdf8",
+                "#dfc27d", "#0042ff", "#4d79f7", "#96a679")
+
+
+names(inter.cols) <- c("PostAire.mTEC.1", "PostAire.mTEC.2", "Intertypical.TEC.1", "Intertypical.TEC.2", "Intertypical.TEC.3", "Intertypical.TEC.4",
+                       'cTEC.1', 'cTEC.2', 'Tuft.mTEC.1', 'Tuft.mTEC.2', 'Prolif.TEC.1', 'Prolif.TEC.2', 'Prolif.TEC.3',
+                       'mTEC.1', 'mTEC.2', 'mTEC.3', 'mTEC.4', 'mTEC.5', 'mTEC.6', 'mTEC.7',
+                       'eTEC1', 'New.TEC.1', 'New.TEC.2', 'Sca1.TEC.1')
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=6.75, fig.width=11.75}
+tec.umap.merge$AgeFactor <- factor(tec.umap.merge$Age,
+                                   levels=c("Wk1", "Wk4", "Wk16"),
+                                   labels=c("Week 1", "Week 4", "Week 16"))
+
+ggplot(tec.umap.merge, aes(x=UMAP.1, y=UMAP.2)) +
+  geom_point(data=tec.umap.merge[,c("UMAP.1", "UMAP.2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=TECtype), shape=21, size=1.8) +
+  theme_mike() +
+  #scale_fill_Publication() +
+  scale_fill_manual(values=inter.cols) +
+  #scale_fill_viridis() +
+  #facet_wrap(~AgeFactor, ncol=4) +
+  theme(strip.background=element_rect(fill='white', colour='white'),
+        strip.text=element_text(size=16), 
+        legend.position="right") +
+  guides(fill=guide_legend(title="TEC.Cluster", ncol=1, title.position="top",
+                           title.theme=element_text(size=14),
+                           override.aes=list(shape=22, size=4.5))) +
+  NULL
+```
+
+Would it be better to have the cluster labels overlaid on the UMAP? I'll use the average dimensions for the cluster as the position for the label
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+umap1.mean <- unlist(by(data=tec.umap.merge$UMAP.1, INDICES=tec.umap.merge$TECtype, FUN=mean))
+umap1.order <- names(umap1.mean)
+umap2.mean <- unlist(by(data=tec.umap.merge$UMAP.2, INDICES=tec.umap.merge$TECtype, FUN=mean))
+umap2.order <- names(umap2.mean)
+
+umap.positions <- data.frame("Label"=umap1.order, "UMAP.1"=as.numeric(umap1.mean), "UMAP.2"=as.numeric(umap2.mean))
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=6.75, fig.width=11.75}
+umap.p <- ggplot(tec.umap.merge, aes(x=UMAP.1, y=UMAP.2)) +
+  geom_point_rast(aes(color=TECtype), size=2.5) +
+  geom_label_repel(data=umap.positions, 
+                   aes(label=Label), fill='grey80',
+                   size=4, colour='black') +
+  theme_mike() +
+  scale_color_manual(values=inter.cols) +
+  theme(strip.background=element_rect(fill='white', colour='white'),
+        strip.text=element_text(size=16), 
+        legend.position="right") +
+  guides(color=FALSE) +
+  NULL
+
+ggsave(umap.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/UMAP_raster_overview.pdf",
+       height=6.75, width=7.75, useDingbats=TRUE)
+
+umap.p
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.75, fig.width=15.75}
+tec.umap.merge$AgeFactor <- factor(tec.umap.merge$Age,
+                                   levels=c("Wk1", "Wk4", "Wk16"),
+                                   labels=c("Week 1", "Week 4", "Week 16"))
+
+age.umap.p <- ggplot(tec.umap.merge, aes(x=UMAP.1, y=UMAP.2)) +
+  geom_point_rast(data=tec.umap.merge[,c("UMAP.1", "UMAP.2")], 
+                  color='grey80', size=1, alpha=0.5) +
+  geom_point_rast(aes(color=TECtype), size=2.5) +
+  theme_mike() +
+  scale_color_manual(values=inter.cols) +
+  facet_wrap(~AgeFactor, ncol=4) +
+  theme(strip.background=element_rect(fill='white', colour='white'),
+        strip.text=element_text(size=21), 
+        legend.position="right") +
+  guides(color=guide_legend(title="TEC.Cluster", ncol=1, title.position="top",
+                           title.theme=element_text(size=16),
+                           override.aes=list(size=4))) +
+  NULL
+
+ggsave(age.umap.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/UMAP_ageing_raster.pdf",
+       height=5.75, width=16.75, useDingbats=FALSE)
+
+age.umap.p
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+graph1.mean <- unlist(by(data=tec.umap.merge$V1, INDICES=tec.umap.merge$TECtype, FUN=mean))
+graph1.order <- names(graph1.mean)
+graph2.mean <- unlist(by(data=tec.umap.merge$V2, INDICES=tec.umap.merge$TECtype, FUN=mean))
+graph2.order <- names(graph2.mean)
+
+graph.positions <- data.frame("Label"=graph1.order, "V1"=as.numeric(graph1.mean), "V2"=as.numeric(graph2.mean))
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=6.75, fig.width=9.75}
+zsg.graph <- ggplot(tec.umap.merge, aes(x=V1, y=V2)) +
+  geom_point_rast(aes(color=TECtype), size=2.5) +
+  # geom_label_repel(data=graph.positions, 
+  #                  aes(label=Label), fill='grey80',
+  #                  size=4, colour='black') +
+  theme_mike() +
+  scale_color_manual(values=inter.cols) +
+  theme(strip.background=element_rect(fill='white', colour='white'),
+        strip.text=element_text(size=16), 
+        axis.title = element_blank(),
+        axis.text=element_blank(),
+        axis.ticks=element_blank(),
+	      axis.line=element_blank(),
+        panel.grid=element_blank(),
+        legend.position="right") +
+  guides(color=guide_legend(ncol=1,
+                            title="TEC.Cluster", title.theme=element_text(size=14),
+                            title.position="top",
+                            override.aes=list(size=5))) +
+  NULL
+
+ggsave(zsg.graph,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/ZsG_graph-cluster_interpretation.pdf",
+       useDingbats=FALSE, height=6.75, width=9.75)
+
+zsg.graph
+```
+
+The labels are too crowded.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=6.95}
+psmb11.p <- ggplot(tec.umap.merge, aes(x=ZsG.Cluster, y=Psmb11, fill=TECtype)) +
+  geom_boxplot(width=0.75, outlier.size=0.5) +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  guides(fill=FALSE) +
+  labs(x="TEC Cluster", y="Psmb11 expression")
+
+ggsave(psmb11.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/Psmb11_by_TEC.pdf",
+       height=3.95, width=6.95, useDingbats=FALSE)
+
+psmb11.p
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=6.95}
+psmb11.p <- ggplot(tec.umap.merge, aes(x=ZsG.Cluster, y=Cd52, fill=TECtype)) +
+  geom_boxplot(width=0.75, outlier.size=0.5) +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  guides(fill=FALSE) +
+  labs(x="TEC Cluster", y="Cd52 expression")
+
+ggsave(psmb11.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/Cd52_by_TEC.pdf",
+       height=3.95, width=6.95, useDingbats=FALSE)
+
+psmb11.p
+```
+
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=6.95}
+psmb11.p <- ggplot(tec.umap.merge, aes(x=ZsG.Cluster, y=Aire, fill=TECtype)) +
+  geom_boxplot(width=0.75, outlier.size=0.5) +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  guides(fill=FALSE) +
+  labs(x="TEC Cluster", y="Aire expression")
+
+ggsave(psmb11.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/Aire_by_TEC.pdf",
+       height=3.95, width=6.95, useDingbats=FALSE)
+
+psmb11.p
+```
+
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=6.95}
+psmb11.p <- ggplot(tec.umap.merge, aes(x=ZsG.Cluster, y=Ccl21a, fill=TECtype)) +
+  geom_boxplot(width=0.75, outlier.size=0.5) +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  guides(fill=FALSE) +
+  labs(x="TEC Cluster", y="Ccl21a expression")
+
+ggsave(psmb11.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/Ccl21a_by_TEC.pdf",
+       height=3.95, width=6.95, useDingbats=FALSE)
+
+psmb11.p
+```
+
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=6.95}
+psmb11.p <- ggplot(tec.umap.merge, aes(x=ZsG.Cluster, y=Gper1, fill=TECtype)) +
+  geom_boxplot(width=0.75, outlier.size=0.5) +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  guides(fill=FALSE) +
+  labs(x="TEC Cluster", y="Gper1 expression")
+
+ggsave(psmb11.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/Gper1_by_TEC.pdf",
+       height=3.95, width=6.95, useDingbats=FALSE)
+
+psmb11.p
+```
+
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=6.95}
+psmb11.p <- ggplot(tec.umap.merge, aes(x=ZsG.Cluster, y=Krt5, fill=TECtype)) +
+  geom_boxplot(width=0.75, outlier.size=0.5) +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  guides(fill=FALSE) +
+  labs(x="TEC Cluster", y="Krt5 expression")
+
+ggsave(psmb11.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/Krt5_by_TEC.pdf",
+       height=3.95, width=6.95, useDingbats=FALSE)
+
+psmb11.p
+```
+
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=6.95}
+psmb11.p <- ggplot(tec.umap.merge, aes(x=ZsG.Cluster, y=Cd177, fill=TECtype)) +
+  geom_boxplot(width=0.75, outlier.size=0.5) +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  guides(fill=FALSE) +
+  labs(x="TEC Cluster", y="Cd177 expression")
+
+ggsave(psmb11.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/Cd177_by_TEC.pdf",
+       height=3.95, width=6.95, useDingbats=FALSE)
+
+psmb11.p
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=6.95}
+psmb11.p <- ggplot(tec.umap.merge, aes(x=ZsG.Cluster, y=Spink5, fill=TECtype)) +
+  geom_boxplot(width=0.75, outlier.size=0.5) +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  guides(fill=FALSE) +
+  labs(x="TEC Cluster", y="Spink5 expression")
+
+ggsave(psmb11.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/Spink5_by_TEC.pdf",
+       height=3.95, width=6.95, useDingbats=FALSE)
+
+psmb11.p
+```
+
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=6.95}
+psmb11.p <- ggplot(tec.umap.merge, aes(x=ZsG.Cluster, y=Avil, fill=TECtype)) +
+  geom_boxplot(width=0.75, outlier.size=0.5) +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  guides(fill=FALSE) +
+  labs(x="TEC Cluster", y="Avil expression")
+
+ggsave(psmb11.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/Avil_by_TEC.pdf",
+       height=3.95, width=6.95, useDingbats=FALSE)
+
+psmb11.p
+```
+
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=6.95}
+psmb11.p <- ggplot(tec.umap.merge, aes(x=ZsG.Cluster, y=Cdk1, fill=TECtype)) +
+  geom_boxplot(width=0.75, outlier.size=0.5) +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  guides(fill=FALSE) +
+  labs(x="TEC Cluster", y="Cdk1 expression")
+
+ggsave(psmb11.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/Cdk1_by_TEC.pdf",
+       height=3.95, width=6.95, useDingbats=FALSE)
+
+psmb11.p
+```
+
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=6.95}
+psmb11.p <- ggplot(tec.umap.merge, aes(x=ZsG.Cluster, y=Syngr1, fill=TECtype)) +
+  geom_boxplot(width=0.75, outlier.size=0.5) +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  guides(fill=FALSE) +
+  labs(x="TEC Cluster", y="Syngr1 expression")
+
+ggsave(psmb11.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/Syngr1_by_TEC.pdf",
+       height=3.95, width=6.95, useDingbats=FALSE)
+
+psmb11.p
+```
+
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=6.95}
+psmb11.p <- ggplot(tec.umap.merge, aes(x=ZsG.Cluster, y=Dll4, fill=TECtype)) +
+  geom_boxplot(width=0.75, outlier.size=0.5) +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  guides(fill=FALSE) +
+  labs(x="TEC Cluster", y="Dll4 expression")
+
+ggsave(psmb11.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/Dll4_by_TEC.pdf",
+       height=3.95, width=6.95, useDingbats=FALSE)
+
+psmb11.p
+```
+
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=6.95}
+psmb11.p <- ggplot(tec.umap.merge, aes(x=ZsG.Cluster, y=Prss16, fill=TECtype)) +
+  geom_boxplot(width=0.75, outlier.size=0.5) +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  guides(fill=FALSE) +
+  labs(x="TEC Cluster", y="Prss16 expression")
+
+ggsave(psmb11.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/Prss16_by_TEC.pdf",
+       height=3.95, width=6.95, useDingbats=FALSE)
+
+psmb11.p
+```
+
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=6.95}
+psmb11.p <- ggplot(tec.umap.merge, aes(x=ZsG.Cluster, y=Ctsl, fill=TECtype)) +
+  geom_boxplot(width=0.75, outlier.size=0.5) +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  guides(fill=FALSE) +
+  labs(x="TEC Cluster", y="Ctsl expression")
+
+ggsave(psmb11.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/Ctsl_by_TEC.pdf",
+       height=3.95, width=6.95, useDingbats=FALSE)
+
+psmb11.p
+```
+
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=6.95}
+psmb11.p <- ggplot(tec.umap.merge, aes(x=ZsG.Cluster, y=Pdpn, fill=TECtype)) +
+  geom_boxplot(width=0.75, outlier.size=0.5) +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  guides(fill=FALSE) +
+  labs(x="TEC Cluster", y="Pdpn expression")
+
+ggsave(psmb11.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/Pdpn_by_TEC.pdf",
+       height=3.95, width=6.95, useDingbats=FALSE)
+
+psmb11.p
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=6.95}
+psmb11.p <- ggplot(tec.umap.merge, aes(x=ZsG.Cluster, y=Cxcl12, fill=TECtype)) +
+  geom_boxplot(width=0.75, outlier.size=0.5) +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  guides(fill=FALSE) +
+  labs(x="TEC Cluster", y="Cxcl12 expression")
+
+ggsave(psmb11.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/Cxcl12_by_TEC.pdf",
+       height=3.95, width=6.95, useDingbats=FALSE)
+
+psmb11.p
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.75, fig.width=15.75}
+sf.umap.p <- ggplot(tec.umap.merge, aes(x=UMAP.1, y=UMAP.2)) +
+  geom_point(data=tec.umap.merge[,c("UMAP.1", "UMAP.2")], 
+                  color='grey80', size=0.5, alpha=0.5) +
+  geom_point(aes(color=SumFactor), size=0.5) +
+  theme_mike() +
+  scale_color_distiller(palette="Oranges") +
+  facet_wrap(~AgeFactor, ncol=4) +
+  theme(strip.background=element_rect(fill='white', colour='white'),
+        strip.text=element_text(size=21), 
+        legend.position="right") +
+  guides(color=guide_colorbar(title="Size Factor", ncol=1, title.position="top",
+                              title.theme=element_text(size=16),
+                              override.aes=list(size=4))) +
+  NULL
+
+ggsave(sf.umap.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/UMAP_SizeFactor_raster.png",
+       height=5.75, width=16.75, dpi=300)
+
+sf.umap.p
+```
+
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.75, fig.width=15.75}
+# merge with nDetected genes
+zsg.detected <- read.table("~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ZsG_nDetected.tsv",
+                           sep="\t", header=TRUE, stringsAsFactors=FALSE)
+
+tec.detec.merge <- merge(tec.umap.merge, zsg.detected, by='Sample')
+
+ndetect.umap.p <- ggplot(tec.detec.merge, aes(x=UMAP.1, y=UMAP.2)) +
+  geom_point(data=tec.detec.merge[,c("UMAP.1", "UMAP.2")], 
+                  color='grey80', size=0.5, alpha=0.5) +
+  geom_point(aes(color=Feature.Detected), size=0.5) +
+  theme_mike() +
+  scale_color_viridis() +
+  facet_wrap(~AgeFactor, ncol=4) +
+  theme(strip.background=element_rect(fill='white', colour='white'),
+        strip.text=element_text(size=21), 
+        legend.position="right") +
+  guides(color=guide_colorbar(title="Features", ncol=1, title.position="top",
+                              direction="vertical",
+                              title.theme=element_text(size=16),
+                              override.aes=list(size=4))) +
+  NULL
+
+ggsave(ndetect.umap.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/UMAP_genesDetected_raster.png",
+       height=5.75, width=16.75, dpi=300)
+
+ndetect.umap.p
+```
+
+What combination of cells co-express _Ccl21a_ and _Psmb11_?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+tec.detec.merge$Ccl21.Psmb11 <- as.numeric(tec.detec.merge$Psmb11 > 0 & tec.detec.merge$Ccl21a > 0)
+
+# plot the % of cells in each cluster with this category
+coexp.xtab <- as.data.frame(xtabs( ~ Ccl21.Psmb11 + AgeFactor + SortType + TECtype + CellOrigin, data=tec.detec.merge))
+# cast into square matrix format to make normalisation easier
+coexp.clust.mat <- dcast(coexp.xtab, TECtype + SortType + Ccl21.Psmb11 ~ AgeFactor + CellOrigin, value.var='Freq')
+
+# normalise by column sums to make them comparable across samples and clusters
+coexp.norm.mat <- as.data.frame(apply(coexp.clust.mat[, -c(1:3)], 2, FUN=function(Q) Q/sum(Q)))
+coexp.norm.mat$TECtype <- coexp.clust.mat$TECtype
+coexp.norm.mat$SortType <- coexp.clust.mat$SortType
+coexp.norm.mat$Ccl21.Psmb11 <- coexp.clust.mat$Ccl21.Psmb11
+
+coexp.cluster.df <- melt(coexp.norm.mat, id.vars=c("TECtype", "SortType", "Ccl21.Psmb11"))
+coexp.cluster.df$Age <- unlist(lapply(strsplit(as.character(coexp.cluster.df$variable), split="_", fixed=TRUE), FUN=function(K) paste0(K[1])))
+coexp.cluster.df$Age <- factor(coexp.cluster.df$Age,
+                             levels=c("Week 1", "Week 4", "Week 16"),
+                             labels=c("Wk1", "Wk4", "Wk16"))
+coexp.cluster.df$SampID <- unlist(lapply(strsplit(as.character(coexp.cluster.df$variable), split="_", fixed=TRUE), FUN=function(K) paste0(K[2])))
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.15, fig.width=9.25}
+ggplot(coexp.cluster.df, aes(x=TECtype, y=value*100, fill=Age)) +
+  geom_boxplot() +
+  scale_fill_manual(values=age.cols) +
+  theme_mike() +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1),
+        legend.position="right", legend.direction="vertical") +
+  labs(x="TEC type", y=expression(bold(paste("% Ccl21a"^"+", "Psmb11"^"+", " cells")))) +
+  
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Paper/eLife_submission/Ccl21a_Psmb11_coexpress-boxplot.pdf",
+       height=4.15, width=9.25, useDingbats=FALSE)
+```
+
+
+

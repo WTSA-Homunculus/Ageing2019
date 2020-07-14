@@ -417,8 +417,999 @@ ggplot(zsg.meta, aes(x=ZsG.Cluster, y=Apoe)) +
   theme_mike()
 ```
 
-There's complexity in these data that might be resolved by a diffusion map - I'll use the PCs as the input data. What about looking just the putative intertypical TEC?
 
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+zsg.meta$CellType <- "Unknown"
+zsg.meta$CellType[zsg.meta$ZsG.Cluster %in% c(4, 7, 10)] <- "Intertypical TEC"
+zsg.meta$CellType[zsg.meta$ZsG.Cluster %in% c(6, 14, 16, 20, 22)] <- "Mature mTEC"
+zsg.meta$CellType[zsg.meta$ZsG.Cluster %in% c(1, 3)] <- "Aire+ mTEC"
+zsg.meta$CellType[zsg.meta$ZsG.Cluster %in% c(2, 12, 24)] <- "Proliferating TEC"
+zsg.meta$CellType[zsg.meta$ZsG.Cluster %in% c(13)] <- "Mature cTEC"
+zsg.meta$CellType[zsg.meta$ZsG.Cluster %in% c(9)] <- "Perinatal cTEC"
+zsg.meta$CellType[zsg.meta$ZsG.Cluster %in% c(4, 7, 10, 11)] <- "Intertypical TEC"
+zsg.meta$CellType[zsg.meta$ZsG.Cluster %in% c(15, 18)] <- "Tuft-like mTEC"
+zsg.meta$CellType[zsg.meta$ZsG.Cluster %in% c(23)] <- "eTEC1"
+zsg.meta$CellType[zsg.meta$ZsG.Cluster %in% c(17, 19)] <- "Post-Aire mTEC"
+zsg.meta$CellType[zsg.meta$ZsG.Cluster %in% c(5)] <- "Sca1+"
+
+mapping.mat <- table(zsg.meta$ZsG.Cluster, zsg.meta$CellType) > 0
+
+pheatmap(mapping.mat + 0, cluster_cols=FALSE, cluster_rows=FALSE, 
+         filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/Cluster-celltype_mapping.pdf")
+
+pheatmap(mapping.mat + 0, cluster_cols=FALSE, cluster_rows=FALSE)
+```
+
+At the moment Clusters 8 and 21 are the only one I can't figure out. Does this categorization give the expected changes in subtype proportions? Cluster 8 are proliferating, 
+but that doesn't tell me what they are. They look like some other type of cTEC based on their position in the SNN-graph.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+cluster.table <- as.data.frame(xtabs(~ CellType + Age + SortType + CellOrigin, data=zsg.meta))
+
+# cast into square matrix format to make normalisation easier
+zsg.clust.mat <- dcast(cluster.table, CellType + SortType ~ Age + CellOrigin, value.var='Freq')
+
+# normalise by column sums to make them comparable across samples and clusters
+zsg.norm.mat <- as.data.frame(apply(zsg.clust.mat[, -c(1, 2)], 2, FUN=function(Q) Q/sum(Q)))
+zsg.norm.mat$CellType <- zsg.clust.mat$CellType
+zsg.norm.mat$SortType <- zsg.clust.mat$SortType
+
+zsg.cluster.df <- melt(zsg.norm.mat, id.vars=c("CellType", "SortType"))
+zsg.cluster.df$Age <- unlist(lapply(strsplit(as.character(zsg.cluster.df$variable), split="_", fixed=TRUE), FUN=function(K) paste0(K[1])))
+zsg.cluster.df$Age <- factor(zsg.cluster.df$Age,
+                             levels=c("Wk1", "Wk4", "Wk16"),
+                             labels=c("Wk1", "Wk4", "Wk16"))
+zsg.cluster.df$SampID <- unlist(lapply(strsplit(as.character(zsg.cluster.df$variable), split="_", fixed=TRUE), FUN=function(K) paste0(K[2])))
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.75, fig.width=10.75}
+label.box <- ggplot(zsg.cluster.df,
+       aes(x=Age, y=value)) +
+  geom_boxplot(fill='grey80') +
+  scale_fill_manual(values=zsg.cols) +
+  #scale_fill_Publication() +
+  theme_mike() +
+  labs(x="Time point (hours)", y="Proportion") +
+  facet_wrap(~CellType, scales="free", ncol=5) +
+  expand_limits(y=c(0))
+
+ggsave(label.box,
+       filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/Composition_Subtype-boxplot.pdf",
+       height=4.75, width=10.75, useDingbats=FALSE)
+
+label.box 
+```
+
+There are fluctuations in the different clusters, but the proportions do seem a little out. The loss of Aire+ mTEC and proliferating TEC makes sense. The loss of cTECs 
+might be due to the decline of perinatal cTECs.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=6.75, fig.width=10.75}
+label.box <- ggplot(zsg.cluster.df,
+       aes(x=Age, y=value, fill=SortType)) +
+  geom_boxplot() +
+  scale_fill_manual(values=zsg.cols) +
+  #scale_fill_Publication() +
+  theme_mike() +
+  labs(x="Time point (hours)", y="Proportion") +
+  facet_wrap(~CellType, scales="free", ncol=5) +
+  expand_limits(y=c(0))
+
+ggsave(label.box,
+       filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/Composition_Subtype_ZsG-boxplot.pdf",
+       height=4.75, width=10.75, useDingbats=FALSE)
+
+label.box
+```
+
+Splitting by ZsG status again resolves this heterogeneity. Notably we can see the decline of ZsG- cTECs (probably perinatal cTEC), and the constant % of ZsG+ cTEC (again 
+probably mature cTEC). The loss of Aire+ mTEC seems fairly constant, though highly variable, whilst the Mature mTEC fluctuate quite a lot but inconsistently. The post-Aire 
+mTEC don't change much by age or ZsG status, whilst the proliferting TEC decline, again regardless of ZsG status. The Sca1+ cells are intresting, they definitely look like 
+they are declining throughout.
+
+The eTEC1 cluster is fairly constant over time which fits with the previous observations too. Likewise the estimates proportion of Intertypical TEC also increases with age, 
+but quite specifically only in the ZsG+ fraction; the ZsG- fraction declines!
+
+Can we model these counts to find statistical evidence of changes? I don't entirely trust either the clustering or my grouping of cells into these TEC subtypes - they are 
+too noisy. How about using `Cydar` to model the different regions of the high-dimensional manifold as hyperspheres, then find which regions of the TEC landscape change 
+over age, and between ZsG sorting groups.
+
+I need to pick the number of 'features' in this case this refers to the number of PCs and the number of hyperspheres to sample the whole space.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# I should use the same number of PCs as I did for the SNN-graph and clustering to make them concordant.
+zsg.pcs <- read.table("~/CI_filesystem/mnt/scratchb/jmlab/morgan02/10X/Thymus_ZsG/ZsG_PCs.tsv",
+                      sep="\t", header=TRUE, stringsAsFactor=FALSE)
+rownames(zsg.pcs) <- zsg.pcs$Sample
+n.dim <- 20
+zsg.pcs.meta <- merge(zsg.meta, zsg.pcs, by='Sample')
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# treat each age as a separate sample/condition
+thymus.red <- zsg.pcs.meta[, c("SortType", "ZsG.Cluster", "Sample", "CellOrigin", "Age", paste0("PC", 1:n.dim))]
+
+# need replicates for DA testing
+thymus.list <- list()
+for(x in seq_along(unique(zsg.pcs.meta$CellOrigin))){
+  plate <- unique(zsg.pcs.meta$CellOrigin)[x]
+  plate.red <- thymus.red[thymus.red$CellOrigin == plate, ]
+  plate.ages <- unique(plate.red$Age)
+  for(i in seq_along(plate.ages)){
+    age <- unique(plate.ages)[i]
+    age.red <- plate.red[plate.red$Age == age, ]
+    age.zsg <- unique(age.red$SortType)
+    for(k in seq_along(age.zsg)){
+      stype <- age.zsg[k]
+      zsg.red <- age.red[age.red$SortType == stype, ]
+      
+      age.mat <- as(zsg.red[, paste0("PC", 1:n.dim)], "matrix")
+      rownames(age.mat) <- zsg.red$Sample
+      thymus.list[[paste(age, paste0(plate), stype, sep=".")]] <- age.mat
+    }
+  }
+}
+
+age.condition <- unlist(lapply(strsplit(names(thymus.list),
+                                        split=".", fixed=TRUE),
+                               FUN=function(X) paste0(X[1])))
+sort.condition <- unlist(lapply(strsplit(names(thymus.list),
+                                        split=".", fixed=TRUE),
+                               FUN=function(X) paste0(X[3])))
+
+cydar.meta <- data.frame("Sample"=names(thymus.list), "Age"=age.condition,
+                         "SortType"=sort.condition)
+cydar.meta$AgeInt <- as.numeric(gsub(cydar.meta$Age, pattern="Wk", replacement=""))
+cydar.meta$Age <- factor(cydar.meta$Age,
+                         levels=c("Wk1", "Wk4", "Wk16"),
+                         labels=c("Wk1", "Wk4", "Wk16"))
+
+cydar.meta$Combo <- paste(cydar.meta$Age, cydar.meta$SortType, sep=".")
+
+thymus.cydar <- prepareCellData(thymus.list)
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+thymus.dist <- neighborDistances(thymus.cydar, neighbors=31, as.tol=TRUE)
+boxplot(thymus.dist)
+```
+
+This box plot shows the distribution of Euclidean distances in the 20-PC space for NNs from 1 to 20. These distances are expressed as tolerance values which is used to 
+count cells in hyperspheres. This is the tolerance value that is proportional to the hypersphere radius, and so is quite important. It looks like that at around 15-20 
+neighbours this starts to plateau. The median tolerance at 15 neighbours is 0.901, whilst at 20 neighbours it is 0.922. I'll go with 0.9 based on this.
+
+I'll start by using age as the predictor variable.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# the consensus indicates the cut off should be 0.9
+# Cydar defines the initial hyperspheres by uniformly sampling every Nth cell, where N=downsample - this 
+# means that some regions in high-dimensional space get sampled more than others that is proportional to 
+# their density.
+
+thymus.cydar <- countCells(thymus.cydar, tol=0.9, filter=0, downsample=3)
+message(paste0("Created ", nrow(thymus.cydar), " hyperspheres"))
+
+# do DA testing with edgeR
+thymus.dge <- DGEList(assay(thymus.cydar), lib.size=thymus.cydar$totals)
+
+# filter low abundance hyperspheres
+keep <- aveLogCPM(thymus.dge) >= aveLogCPM(2, mean(thymus.cydar$totals))
+thymus.cydar <- thymus.cydar[keep,]
+thymus.dge <- thymus.dge[keep,]
+
+thymus.design <- model.matrix(~AgeInt + SortType, data=cydar.meta)
+thymus.dge <- estimateDisp(thymus.dge, thymus.design)
+# colnames(thymus.design) <- gsub(colnames(thymus.design), pattern=":", replacement="_")
+# cydar.contrast <- makeContrasts(AgeInt_SortTypeZsGn - AgeInt_SortTypeZsGp,
+#                                 levels=thymus.design)
+
+thymus.fit <- glmQLFit(thymus.dge, thymus.design, robust=TRUE)
+thymus.res <- glmQLFTest(thymus.fit, coef=2)
+# thymus.res <- glmQLFTest(thymus.fit, contrast = cydar.contrast)
+
+# control the spatial FDR
+qvals <- spatialFDR(intensities(thymus.cydar), thymus.res$table$PValue)
+is.sig <- qvals <= 0.01
+summary(is.sig)
+```
+
+There are 2088 DA hyperspheres across the interaction between age and ZsG groups.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+sig.coords <- intensities(thymus.cydar)#[is.sig,]
+sig.res <- thymus.res$table#[is.sig,]
+coords <- prcomp(sig.coords)
+
+plotCellLogFC(coords$x[,1], coords$x[,2], sig.res$logFC, xlab="Hypersphere PC1", ylab="Hypersphere PC2")
+```
+
+Each of these plots represents a hypersphere. The red shows increasing abundance with age, whilst the blue shows decreasing. This is an oversimplification as this only shows 
+the first 2 PCs of all of hyperspheres (non-DA spheres are in grey). I could create a UMAP of the hyperspheres, or even an SNN-graph for visualisation.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+par(mfrow=c(3,3), mar=c(2.1, 1.1, 3.1, 1.1))
+limits <- intensityRanges(thymus.cydar, p=0.01)
+all.markers <- markernames(thymus.cydar)[1:9]
+for (i in order(all.markers)) { 
+  plotSphereIntensity(coords$x[,1], coords$x[,2], sig.coords[,i],
+                    irange=limits[,i], main=all.markers[i],
+                    cex=1.5)
+}
+
+```
+
+This plot shows the median single-cell PC value for each hypersphere for the first 9 PCs overlaid on a separate PCA of the hyperspheres themselves. It mostly shows how 
+different PCs define the different directions in the single-cell data.
+
+I should be able to translate these hyperspheres back into regions in my reduced dimensional graph. How about taking the majority vote of cells in each hypersphere as the 
+cluster ID?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+set.seed(42)
+cydar.umap <- umap(coords$x, 
+                   n_neighbors=19,
+                   init='random',
+                   metric='euclidean',
+                   n_components=2,
+                   min_dist=0.4,
+                   method='naive')
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.95, fig.width=5.95}
+cydar.umap.df <- data.frame("HS"=paste0("HS", c(1:nrow(thymus.cydar))), "UMAP.1"=cydar.umap$layout[, 1], "UMAP.2"=cydar.umap$layout[, 2],
+                            "logFC"=sig.res$logFC)
+# set the non-sig logFC to 0
+cydar.umap.df$logFC[!is.sig] <- 0
+
+ggplot(cydar.umap.df, aes(x=UMAP.1, y=UMAP.2)) +
+  geom_point(data=cydar.umap.df[, c("UMAP.1", "UMAP.2")],
+             shape=21, size=2.5, fill='grey80') +
+  geom_point(data=cydar.umap.df[abs(cydar.umap.df$logFC) > 0, ],
+             aes(fill=logFC), shape=21, size=2.5) +
+  theme_mike() +
+  scale_fill_gradient2(low="blue", mid='grey80', high="red") +
+  NULL
+
+ggsave(filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/Cydar_UMAP-ageFC.pdf",
+       height=5.95, width=5.95, useDingbats=FALSE)
+```
+
+This is a UMAP representation of the hyperspheres. I want to show how different regions either increase or decrease in abundance. Areas in blue decrease in abundance with 
+age, whilst the red ones increase. What are these regions though? Can I assign some meta-data to them, such as cluster and ZsG information?
+
+I can extract the indices of the cells that fall into each hypersphere. Using this I can then plot the average age, major cluster and sort type in each hypersphere, etc.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+cell.ids <- colnames(cellIntensities(thymus.cydar))
+cell.indices <- thymus.cydar@int_elementMetadata$cydar@listData$cellAssignments
+# loop over the hyperspheres and calculate the proportion of cells in each cluster, proportion of cells at each age, as well as 
+# the average expression of marker genes and proportion of ZsG+ cells
+
+zsg.pcs.meta$SortType <- factor(zsg.pcs.meta$SortType)
+
+hs.meta.list <- list()
+for(x in seq_along(1:length(cell.indices))){
+ x.cells <- cell.indices[[x]]
+ x.cellids <- cell.ids[x.cells]
+ x.ages <- gsub(as.character(zsg.pcs.meta[zsg.pcs.meta$Sample %in% x.cellids, ]$Age), pattern="Wk", replacement="")
+ # use the median age of cells
+ age.median <- median(as.numeric(x.ages))
+ 
+ x.sort <- zsg.pcs.meta[zsg.pcs.meta$Sample %in% x.cellids, ]$SortType
+ sort.tab <- as.data.frame(table(x.sort)/length(x.sort))
+ 
+ x.cluster <- zsg.pcs.meta[zsg.pcs.meta$Sample %in% x.cellids, ]$ZsG.Cluster
+ clust.tab <- as.data.frame(table(x.cluster)/length(x.cluster))
+ 
+ # select the majority cluster too
+ maj.clust <- as.character(clust.tab$x.cluster[clust.tab$Freq == max(clust.tab$Freq)])
+ if(length(maj.clust) > 1){
+   maj.clust <- paste(maj.clust, collapse=".")
+ }
+ 
+ x.meta <- do.call(cbind.data.frame,
+                   list("clust"=dcast(clust.tab, . ~x.cluster, value.var='Freq')[, -1],
+                        "sort"=dcast(sort.tab, . ~x.sort, value.var='Freq')[, -1]))
+ x.meta$Median.Age <- age.median
+ x.meta$Maj.Cluster <- maj.clust
+ 
+ # now I need to summarise each marker gene
+ x.cdk1 <- mean(zsg.pcs.meta[zsg.pcs.meta$Sample %in% x.cellids, ]$Cdk1)
+ x.meta$Cdk1 <- x.cdk1
+ 
+ x.aire <- mean(zsg.pcs.meta[zsg.pcs.meta$Sample %in% x.cellids, ]$Aire)
+ x.meta$Aire <- x.aire
+ 
+ x.cd52 <- mean(zsg.pcs.meta[zsg.pcs.meta$Sample %in% x.cellids, ]$Cd52)
+ x.meta$Cd52 <- x.cd52
+ 
+ x.prss16 <- mean(zsg.pcs.meta[zsg.pcs.meta$Sample %in% x.cellids, ]$Prss16)
+ x.meta$Prss16 <- x.prss16
+ 
+ x.psmb11 <- mean(zsg.pcs.meta[zsg.pcs.meta$Sample %in% x.cellids, ]$Psmb11)
+ x.meta$Psmb11 <- x.psmb11
+ 
+ x.avil <- mean(zsg.pcs.meta[zsg.pcs.meta$Sample %in% x.cellids, ]$Avil)
+ x.meta$Avil <- x.avil
+ 
+ x.dll4 <- mean(zsg.pcs.meta[zsg.pcs.meta$Sample %in% x.cellids, ]$Dll4)
+ x.meta$Dll4 <- x.dll4
+ 
+ x.ccl21a <- mean(zsg.pcs.meta[zsg.pcs.meta$Sample %in% x.cellids, ]$Ccl21a)
+ x.meta$Ccl21a <- x.ccl21a
+ 
+ x.cxcl12 <- mean(zsg.pcs.meta[zsg.pcs.meta$Sample %in% x.cellids, ]$Cxcl12)
+ x.meta$Cxcl12 <- x.cxcl12
+ 
+ x.spink5 <- mean(zsg.pcs.meta[zsg.pcs.meta$Sample %in% x.cellids, ]$Spink5)
+ x.meta$Spink5 <- x.spink5
+ 
+ x.gper1 <- mean(zsg.pcs.meta[zsg.pcs.meta$Sample %in% x.cellids, ]$Gper1)
+ x.meta$Gper1 <- x.gper1
+ 
+ x.cd177 <- mean(zsg.pcs.meta[zsg.pcs.meta$Sample %in% x.cellids, ]$Cd177)
+ x.meta$Cd177 <- x.cd177
+ 
+ x.pdpn <- mean(zsg.pcs.meta[zsg.pcs.meta$Sample %in% x.cellids, ]$Pdpn)
+ x.meta$Pdpn <- x.pdpn
+ 
+ x.car8 <- mean(zsg.pcs.meta[zsg.pcs.meta$Sample %in% x.cellids, ]$Car8)
+ x.meta$Car8 <- x.car8
+ 
+ x.krt5 <- mean(zsg.pcs.meta[zsg.pcs.meta$Sample %in% x.cellids, ]$Krt5)
+ x.meta$Krt5 <- x.krt5
+ 
+ hs.meta.list[[paste0(x)]] <- x.meta
+}
+
+hs.meta <- do.call(rbind.data.frame,
+                   hs.meta.list)
+hs.meta$HS <- paste0("HS", 1:nrow(hs.meta))
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.95, fig.width=5.95}
+cydar.umap.merge <- merge(hs.meta, cydar.umap.df, by='HS')
+# cydar.umap.merge$Median.Age <- factor(cydar.umap.merge$Median.Age,
+#                                       levels=c(1, 4, 16),
+#                                       labels=c(1, 4, 16))
+
+ggplot(cydar.umap.merge, aes(x=UMAP.1, y=UMAP.2)) +
+  geom_point(aes(fill=Median.Age), shape=21, size=2.5) +
+  theme_mike() +
+  scale_fill_distiller(palette="OrRd", direction=1) +
+  NULL
+ 
+ggsave(filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/Cydar_UMAP-MedianAge.pdf",
+       height=5.95, width=5.95, useDingbats=FALSE)
+```
+
+This shows the median age in each hypersphere. We can do the same analysis but comparing ZsG sorting.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.95, fig.width=5.95}
+ggplot(cydar.umap.merge, aes(x=UMAP.1, y=UMAP.2)) +
+  geom_point(aes(fill=sort.ZsGp), shape=21, size=2.5) +
+  theme_mike() +
+  scale_fill_gradient(low='#c63af3', high='#12f000', limits=c(0, 1)) +
+  NULL
+ 
+ggsave(filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/Cydar_UMAP-ZsGProp.pdf",
+       height=5.95, width=5.95, useDingbats=FALSE)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+thymus.res.sort <- glmQLFTest(thymus.fit, coef=3)
+# thymus.res <- glmQLFTest(thymus.fit, contrast = cydar.contrast)
+
+# control the spatial FDR
+qvals <- spatialFDR(intensities(thymus.cydar), thymus.res.sort$table$PValue)
+sort.is.sig <- qvals <= 0.01
+summary(sort.is.sig)
+```
+
+There are 1916 DA hyperspheres w.r.t. ZsG-sorting group. How many of these are also DA w.r.t. age?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+table(sort.is.sig, is.sig)
+```
+
+There are 697 hyperspheres that are DA for both age and sorting type - these are probably the ones of greatest interest.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.95, fig.width=5.95}
+cydar.sortlf.df <- data.frame("HS"=paste0("HS", c(1:nrow(thymus.cydar))), 
+                              "logFC.Sort"=thymus.res.sort$table$logFC)
+# set the non-sig logFC to 0
+cydar.sortlf.df$logFC.Sort[!sort.is.sig] <- 0
+
+cydar.merge.res <- merge(cydar.umap.merge, cydar.sortlf.df, by='HS')
+
+
+ggplot(cydar.merge.res, aes(x=UMAP.1, y=UMAP.2)) +
+  geom_point(data=cydar.merge.res[, c("UMAP.1", "UMAP.2")],
+             shape=21, size=2.5, fill='grey80') +
+  geom_point(data=cydar.merge.res[abs(cydar.merge.res$logFC.Sort) > 0, ],
+             aes(fill=logFC.Sort), shape=21, size=2.5) +
+  theme_mike() +
+  scale_fill_gradient2(low="blue", mid='grey80', high="red") +
+  NULL
+ 
+ggsave(filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/Cydar_UMAP-sortFC.pdf",
+       height=5.95, width=5.95, useDingbats=FALSE)
+```
+
+I'll now test for the interaction between age and sorting.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+thymus.design <- model.matrix(~AgeInt:SortType, data=cydar.meta)
+thymus.dge <- estimateDisp(thymus.dge, thymus.design)
+colnames(thymus.design) <- gsub(colnames(thymus.design), pattern=":", replacement="_")
+cydar.contrast <- makeContrasts(AgeInt_SortTypeZsGp - AgeInt_SortTypeZsGn,
+                                levels=thymus.design)
+
+thymus.fit <- glmQLFit(thymus.dge, thymus.design, robust=TRUE)
+#thymus.res <- glmQLFTest(thymus.fit, coef=2)
+thymus.res.int <- glmQLFTest(thymus.fit, contrast = cydar.contrast)
+
+# control the spatial FDR
+qvals <- spatialFDR(intensities(thymus.cydar), thymus.res.int$table$PValue)
+is.sig.int <- qvals <= 0.01
+summary(is.sig.int)
+```
+
+There are 1270 hyperspheres for which there is a significant interaction between age and ZsG-sorting.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.95, fig.width=5.95}
+cydar.interact.df <- data.frame("HS"=paste0("HS", c(1:nrow(thymus.cydar))), 
+                                "logFC.Int"=thymus.res.int$table$logFC)
+# set the non-sig logFC to 0
+cydar.interact.df$logFC.Int[!is.sig.int] <- 0
+
+cydar.merge.int <- merge(cydar.merge.res, cydar.interact.df, by='HS')
+
+
+ggplot(cydar.merge.int, aes(x=UMAP.1, y=UMAP.2)) +
+  geom_point(data=cydar.merge.int[, c("UMAP.1", "UMAP.2")],
+             shape=21, size=2.5, fill='grey80') +
+  geom_point(data=cydar.merge.int[abs(cydar.merge.int$logFC.Int) > 0, ],
+             aes(fill=logFC.Int), shape=21, size=2.5) +
+  theme_mike() +
+  scale_fill_gradient2(low="blue", mid='grey80', high="red") +
+  NULL
+ 
+ggsave(filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/Cydar_UMAP-InteractFC.pdf",
+       height=5.95, width=5.95, useDingbats=FALSE)
+```
+
+This shows the log fold change for the interaction term between age and ZsG sorting. Positive LFchange is higher in the ZsG+.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=9.95}
+# Assign outlier cells to a specific age
+cydar.merge.int$Age <- factor(cydar.merge.int$Median.Age,
+                              levels=c(1, 4, 16),
+                              labels=c(1, 4, 16))
+cydar.merge.int$Age[is.na(cydar.merge.int$Age) & cydar.merge.int$Median.Age == 2.5] <- 4
+cydar.merge.int$Age[is.na(cydar.merge.int$Age) & cydar.merge.int$Median.Age == 10] <- 16
+
+ggplot(cydar.merge.int, aes(x=UMAP.1, y=UMAP.2)) +
+  geom_point(data=cydar.merge.int[,c("UMAP.1", "UMAP.2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=sort.ZsGp), shape=21, size=2.5) +
+  theme_mike() +
+  scale_fill_gradient(low='#c63af3', high='#12f000', limits=c(0, 1)) +
+  facet_wrap(~Age) +
+  NULL
+ 
+ggsave(filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/Cydar_UMAP-ZsGPropby_age.pdf",
+       height=4.95, width=9.95, useDingbats=FALSE)
+```
+
+What do these DA regions correspond to in terms of TEC subtypes?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=9.95}
+ggplot(cydar.merge.int, aes(x=UMAP.1, y=UMAP.2)) +
+  geom_point(data=cydar.merge.int[,c("UMAP.1", "UMAP.2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=Aire), shape=21, size=2.5) +
+  theme_mike() +
+  scale_fill_viridis(limits=c(0, 5)) +
+  facet_wrap(~Age) +
+  NULL
+ 
+ggsave(filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/Cydar_UMAP-Aire_byAge.pdf",
+       height=4.95, width=9.95, useDingbats=FALSE)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=9.95}
+ggplot(cydar.merge.int, aes(x=UMAP.1, y=UMAP.2)) +
+  geom_point(data=cydar.merge.int[,c("UMAP.1", "UMAP.2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=Cd52), shape=21, size=2.5) +
+  theme_mike() +
+  scale_fill_viridis(limits=c(0, 5)) +
+  facet_wrap(~Age) +
+  NULL
+ 
+ggsave(filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/Cydar_UMAP-Cd52_byAge.pdf",
+       height=4.95, width=9.95, useDingbats=FALSE)
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=9.95}
+ggplot(cydar.merge.int, aes(x=UMAP.1, y=UMAP.2)) +
+  geom_point(data=cydar.merge.int[,c("UMAP.1", "UMAP.2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=Ccl21a), shape=21, size=2.5) +
+  theme_mike() +
+  scale_fill_viridis(limits=c(0, 9)) +
+  facet_wrap(~Age) +
+  NULL
+ 
+ggsave(filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/Cydar_UMAP-Ccl21a_byAge.pdf",
+       height=4.95, width=9.95, useDingbats=FALSE)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=9.95}
+ggplot(cydar.merge.int, aes(x=UMAP.1, y=UMAP.2)) +
+  geom_point(data=cydar.merge.int[,c("UMAP.1", "UMAP.2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=Krt5), shape=21, size=2.5) +
+  theme_mike() +
+  scale_fill_viridis(limits=c(0, 6)) +
+  facet_wrap(~Age) +
+  NULL
+ 
+ggsave(filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/Cydar_UMAP-Krt5_byAge.pdf",
+       height=4.95, width=9.95, useDingbats=FALSE)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=9.95}
+ggplot(cydar.merge.int, aes(x=UMAP.1, y=UMAP.2)) +
+  geom_point(data=cydar.merge.int[,c("UMAP.1", "UMAP.2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=Pdpn), shape=21, size=2.5) +
+  theme_mike() +
+  scale_fill_viridis(limits=c(0, 4)) +
+  facet_wrap(~Age) +
+  NULL
+ 
+ggsave(filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/Cydar_UMAP-Pdpn_byAge.pdf",
+       height=4.95, width=9.95, useDingbats=FALSE)
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=9.95}
+ggplot(cydar.merge.int, aes(x=UMAP.1, y=UMAP.2)) +
+  geom_point(data=cydar.merge.int[,c("UMAP.1", "UMAP.2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=Avil), shape=21, size=2.5) +
+  theme_mike() +
+  scale_fill_viridis(limits=c(0, 5)) +
+  facet_wrap(~Age) +
+  NULL
+ 
+ggsave(filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/Cydar_UMAP-Avil_byAge.pdf",
+       height=4.95, width=9.95, useDingbats=FALSE)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=9.95, fig.width=9.95}
+ggplot(cydar.merge.int, aes(x=UMAP.1, y=UMAP.2)) +
+  geom_point(data=cydar.merge.int[,c("UMAP.1", "UMAP.2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=Median.Age), shape=21, size=2.5) +
+  theme_mike() +
+  scale_fill_distiller(palette="OrRd", direction=1) +
+  facet_wrap(~Maj.Cluster, ncol=4) +
+  NULL
+ 
+ggsave(filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/Cydar_UMAP-MajCluster.pdf",
+       height=9.95, width=9.95, useDingbats=FALSE)
+```
+
+There's complexity in these data that might be resolved by a diffusion map - I'll use the PCs as the input data.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+set.seed(42)
+rownames(zsg.pcs.meta) <- zsg.pcs.meta$Sample
+zsg.dm <- DiffusionMap(as.matrix(zsg.pcs.meta[, paste0("PC", 1:20)]),
+                           n_eigs=20, k=20, distance='euclidean')
+plot(zsg.dm)
+```
+
+Ooh that looks pretty! I'd say there are ~3 lineages present in there. __NB__ This is insanely slow.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+zsg.dpt <- DPT(zsg.dm)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+zsg.diffusion <- do.call(cbind.data.frame,
+                         list("DC1"=zsg.dpt$DC1, "DC2"=zsg.dpt$DC2, "DC3"=zsg.dpt$DC3,
+                             "DC4"=zsg.dpt$DC4, "DC5"=zsg.dpt$DC4, "DC6"=zsg.dpt$DC4,
+                             "DC7"=zsg.dpt$DC4, "DC8"=zsg.dpt$DC4, "DC9"=zsg.dpt$DC4,
+                             "DC10"=zsg.dpt$DC4, "DPT1"=zsg.dpt$DPT1, "DPT2"=zsg.dpt$DPT2,
+                             "DPT3"=zsg.dpt$DPT3, "Branch"=zsg.dpt$Branch, "Sample"=zsg.pcs.meta$Sample))
+
+rownames(zsg.diffusion) <- zsg.diffusion$Sample
+zsg.diffusion.merge <- merge(zsg.diffusion, zsg.pcs.meta, by='Sample')
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(zsg.diffusion.merge, aes(x=DC1, y=DC2)) +
+  geom_point(data=zsg.diffusion.merge[,c("DC1", "DC2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=SortType), shape=21, size=2.5) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cols) +
+  facet_wrap(~Age, ncol=4) +
+  NULL
+```
+
+It looks like the 3 lineages all separate on different diffusion components.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(zsg.diffusion.merge, aes(x=DC2, y=DC3)) +
+  geom_point(data=zsg.diffusion.merge[,c("DC2", "DC3")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=SortType), shape=21, size=2.5) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cols) +
+  facet_wrap(~Age, ncol=4) +
+  NULL
+```
+
+I need to determine which cell is the apex of these branching lineages.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(zsg.diffusion.merge, aes(x=DC3, y=DC4)) +
+  geom_point(data=zsg.diffusion.merge[,c("DC3", "DC4")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=SortType), shape=21, size=2.5) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cols) +
+  facet_wrap(~Age, ncol=4) +
+  NULL
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.95, fig.width=9.95}
+ggplot(zsg.diffusion.merge, aes(x=DC1, y=DC2)) +
+  geom_point(data=zsg.diffusion.merge[,c("DC1", "DC2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=ZsG.Cluster), shape=21, size=2.5) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cluster.cols) +
+  facet_wrap(~Age, ncol=4) +
+  NULL
+```
+
+There's a lot to unpack here - namely that DC1 appears to separate one of the mTEC lineages. It might just be 
+easier to pull out the cells inthe clusters along each branch, including everything at the apex, and try to 
+identify the lineages that way.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.width=9.95, fig.height=13.95}
+ggplot(zsg.diffusion.merge, aes(x=DC1, y=DC2)) +
+  geom_point(data=zsg.diffusion.merge[,c("DC1", "DC2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=ZsG.Cluster), shape=21, size=2.5) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cluster.cols) +
+  facet_wrap(~ZsG.Cluster, ncol=4) +
+  NULL
+```
+
+Clusters 6 and 22 appear to form the later mTEC lineage. Clusters 8, 9, 11 and 21 appear to form the other unknown lineage trajectory.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.width=9.95, fig.height=13.95}
+ggplot(zsg.diffusion.merge, aes(x=DC2, y=DC3)) +
+  geom_point(data=zsg.diffusion.merge[,c("DC2", "DC3")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=ZsG.Cluster), shape=21, size=2.5) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cluster.cols) +
+  facet_wrap(~ZsG.Cluster, ncol=4) +
+  NULL
+```
+
+The separation DC3 appears to the Tuft-like mTEC lineage. That would be clusters 15 and 18.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.width=9.95, fig.height=13.95}
+ggplot(zsg.diffusion.merge, aes(x=DC3, y=DC4)) +
+  geom_point(data=zsg.diffusion.merge[,c("DC3", "DC4")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=ZsG.Cluster), shape=21, size=2.5) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cluster.cols) +
+  facet_wrap(~ZsG.Cluster, ncol=4) +
+  NULL
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+set.seed(42)
+branch1.cells <- zsg.pcs.meta$Sample[zsg.pcs.meta$ZsG.Cluster %in% c(8, 10, 11, 21)]
+branch1.meta <- zsg.pcs.meta[branch1.cells, ]
+rownames(branch1.meta) <- branch1.meta$Sample
+
+branch1.dm <- DiffusionMap(as.matrix(branch1.meta[, paste0("PC", 1:20)]),
+                           n_eigs=20, k=20, distance='euclidean')
+plot(branch1.dm)
+```
+
+It looks like there might be one trajectory and then a separate population? It does look a bit like one of the clusters 
+feeds into this other lineage though...
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+branch1.dpt <- DPT(branch1.dm)
+
+branch1.diffusion <- do.call(cbind.data.frame,
+                         list("DC1"=branch1.dpt$DC1, "DC2"=branch1.dpt$DC2, "DC3"=branch1.dpt$DC3,
+                             "DC4"=branch1.dpt$DC4, "DC5"=branch1.dpt$DC4, "DC6"=branch1.dpt$DC4,
+                             "DC7"=branch1.dpt$DC4, "DC8"=branch1.dpt$DC4, "DC9"=branch1.dpt$DC4,
+                             "DC10"=branch1.dpt$DC4, "DPT1"=branch1.dpt$DPT1, "DPT2"=branch1.dpt$DPT2,
+                             "DPT3"=branch1.dpt$DPT3, "Branch"=branch1.dpt$Branch,
+                             "Sample"=branch1.meta$Sample))
+
+rownames(branch1.diffusion) <- branch1.diffusion$Sample
+branch1.diffusion.merge <- merge(branch1.diffusion, branch1.meta, by='Sample')
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(branch1.diffusion.merge, aes(x=DC1, y=DC2)) +
+  geom_point(data=branch1.diffusion.merge[,c("DC1", "DC2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=SortType), shape=21, size=1.8) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cols) +
+  facet_wrap(~Age, ncol=4) +
+  NULL
+```
+
+Is that two separate lineages?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(branch1.diffusion.merge, aes(x=DC1, y=DC2)) +
+  geom_point(data=branch1.diffusion.merge[,c("DC1", "DC2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=ZsG.Cluster), shape=21, size=1.8) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cluster.cols) +
+  facet_wrap(~Age, ncol=4) +
+  NULL
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.width=9.75, fig.height=12.75}
+ggplot(branch1.diffusion.merge, aes(x=DC1, y=DC2)) +
+  geom_point(data=branch1.diffusion.merge[,c("DC1", "DC2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=ZsG.Cluster), shape=21, size=2.5) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cluster.cols) +
+  facet_grid(ZsG.Cluster~Age) +
+  NULL
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(branch1.diffusion.merge, aes(x=DC1, y=DC2)) +
+  geom_point(data=branch1.diffusion.merge[,c("DC1", "DC2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=Cdk1), shape=21, size=1.8) +
+  theme_mike() +
+  #scale_fill_manual(values=zsg.cluster.cols) +
+  scale_fill_viridis() +
+  facet_wrap(~Age, ncol=4) +
+  NULL
+```
+
+These look like completely different lineages, but some cells from cluster 11 look like they might be transitioning into 
+cluster 21 or _vice versa_.
+
+What about looking just the putative intertypical TEC?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+set.seed(42)
+itec.cells <- zsg.pcs.meta$Sample[zsg.pcs.meta$ZsG.Cluster %in% c(4, 7, 10, 11)]
+itec.meta <- zsg.pcs.meta[itec.cells, ]
+rownames(itec.meta) <- itec.meta$Sample
+
+itec.dm <- DiffusionMap(as.matrix(itec.meta[, paste0("PC", 1:20)]),
+                           n_eigs=20, k=20, distance='euclidean')
+plot(itec.dm)
+```
+
+It looks like there might be one trajectory and then a separate population? It does look a bit like one of the clusters 
+feeds into this other lineage though...
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+itec.dpt <- DPT(itec.dm)
+
+itec.diffusion <- do.call(cbind.data.frame,
+                         list("DC1"=itec.dpt$DC1, "DC2"=itec.dpt$DC2, "DC3"=itec.dpt$DC3,
+                             "DC4"=itec.dpt$DC4, "DC5"=itec.dpt$DC4, "DC6"=itec.dpt$DC4,
+                             "DC7"=itec.dpt$DC4, "DC8"=itec.dpt$DC4, "DC9"=itec.dpt$DC4,
+                             "DC10"=itec.dpt$DC4, "DPT1"=itec.dpt$DPT1, "DPT2"=itec.dpt$DPT2,
+                             "DPT3"=itec.dpt$DPT3, "Branch"=itec.dpt$Branch,
+                             "Sample"=itec.meta$Sample))
+
+rownames(itec.diffusion) <- itec.diffusion$Sample
+itec.diffusion.merge <- merge(itec.diffusion, itec.meta, by='Sample')
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(itec.diffusion.merge, aes(x=DC1, y=DC2)) +
+  geom_point(data=itec.diffusion.merge[,c("DC1", "DC2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=ZsG.Cluster), shape=21, size=1.8) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cluster.cols) +
+  #scale_fill_viridis() +
+  facet_wrap(~Age, ncol=4) +
+  NULL
+```
+
+Hmm, not a lot of obvious structure in there...
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(itec.diffusion.merge, aes(x=DC2, y=DC3)) +
+  geom_point(data=itec.diffusion.merge[,c("DC2", "DC3")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=ZsG.Cluster), shape=21, size=1.8) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cluster.cols) +
+  #scale_fill_viridis() +
+  facet_wrap(~Age, ncol=4) +
+  NULL
+```
+
+This make it look like cluster 7 is a lineage in a specific direction.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(itec.diffusion.merge, aes(x=DC1, y=DC2)) +
+  geom_point(data=itec.diffusion.merge[,c("DC1", "DC2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=Psmb11), shape=21, size=1.8) +
+  theme_mike() +
+  #scale_fill_manual(values=zsg.cluster.cols) +
+  scale_fill_viridis() +
+  facet_wrap(~Age, ncol=4) +
+  NULL
+```
+
+Hmm, there's a fair bit of _Psmb11_ expression in the cluster 10 cells - this either means that they are cTECs or TEPCs.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=9.75, fig.width=6.95}
+ggplot(itec.diffusion.merge, aes(x=DC1, y=DC2)) +
+  geom_point(data=itec.diffusion.merge[,c("DC1", "DC2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=Ccl21a), shape=21, size=1.8) +
+  theme_mike() +
+  #scale_fill_manual(values=zsg.cluster.cols) +
+  scale_fill_viridis() +
+  facet_grid(ZsG.Cluster~Age) +
+  NULL
+```
+
+Generally speaking, _Ccl21a_ is primarily expressed in clusters 4 and 7, though there is some overlap. It definitely looks like there is a subset of clusters 10 and 11 at all 3 time points. 
+Is there a split with ZsG+/- status?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=9.75, fig.width=8.95}
+ggplot(itec.diffusion.merge, aes(x=DC1, y=DC2)) +
+  geom_point(data=itec.diffusion.merge[,c("DC1", "DC2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=Ccl21a), shape=21, size=1.8) +
+  theme_mike() +
+  #scale_fill_manual(values=zsg.cluster.cols) +
+  scale_fill_viridis() +
+  facet_grid(ZsG.Cluster~SortType) +
+  NULL
+```
+
+The separation between _Ccl21a_+/- isn't due to the lineage tracing populations either.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=9.75, fig.width=6.95}
+ggplot(itec.diffusion.merge, aes(x=DC1, y=DC2)) +
+  geom_point(data=itec.diffusion.merge[,c("DC1", "DC2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=Psmb11), shape=21, size=1.8) +
+  theme_mike() +
+  #scale_fill_manual(values=zsg.cluster.cols) +
+  scale_fill_viridis() +
+  facet_grid(ZsG.Cluster~Age) +
+  NULL
+```
+
+It looks, just by eye-balling this plot, that cluster 4 increases proportionally with age. I have a feeling that _Psmb11_ and _Ccl21a_ might not overlap in expression much.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.75, fig.width=9.95}
+itec.diffusion.merge$Ccl21a.Psmb11 <- as.numeric(itec.diffusion.merge$Ccl21a > 0 & itec.diffusion.merge$Psmb11 > 0)
+
+ggplot(itec.diffusion.merge, aes(x=DC1, y=DC2)) +
+  geom_point(data=itec.diffusion.merge[,c("DC1", "DC2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=Ccl21a.Psmb11), shape=21, size=1.8) +
+  theme_mike() +
+  #scale_fill_manual(values=zsg.cluster.cols) +
+  scale_fill_viridis() +
+  facet_grid(Age~ZsG.Cluster) +
+  NULL
+```
+
+This shows which cells have both non-zero expression of _Psmb11_ and _Ccl21a_ by age and cluster. It looks like there is an overlap region which might be expected if the cells are 
+differentiating. It would be nice to figure out if these cells are biased toward one lineage or another.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+set.seed(42)
+tecdiff.cells <- zsg.pcs.meta$Sample[zsg.pcs.meta$ZsG.Cluster %in% c(1, 2, 3,  4, 7, 9, 10, 11, 12, 13, 14, 16)]
+tecdiff.meta <- zsg.pcs.meta[tecdiff.cells, ]
+rownames(tecdiff.meta) <- tecdiff.meta$Sample
+
+tecdiff.dm <- DiffusionMap(as.matrix(tecdiff.meta[, paste0("PC", 1:20)]),
+                           n_eigs=20, k=20, distance='euclidean')
+plot(tecdiff.dm)
+```
+
+This includes the iTEC populations, as well as the putative cTEC and mTEC populations.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+tecdiff.dpt <- DPT(tecdiff.dm)
+
+tecdiff.diffusion <- do.call(cbind.data.frame,
+                         list("DC1"=tecdiff.dpt$DC1, "DC2"=tecdiff.dpt$DC2, "DC3"=tecdiff.dpt$DC3,
+                             "DC4"=tecdiff.dpt$DC4, "DC5"=tecdiff.dpt$DC4, "DC6"=tecdiff.dpt$DC4,
+                             "DC7"=tecdiff.dpt$DC4, "DC8"=tecdiff.dpt$DC4, "DC9"=tecdiff.dpt$DC4,
+                             "DC10"=tecdiff.dpt$DC4, "DPT1"=tecdiff.dpt$DPT1, "DPT2"=tecdiff.dpt$DPT2,
+                             "DPT3"=tecdiff.dpt$DPT3, "Branch"=tecdiff.dpt$Branch,
+                             "Sample"=tecdiff.meta$Sample))
+
+rownames(tecdiff.diffusion) <- tecdiff.diffusion$Sample
+tecdiff.diffusion.merge <- merge(tecdiff.diffusion, tecdiff.meta, by='Sample')
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.75, fig.width=9.75}
+ggplot(tecdiff.diffusion.merge, aes(x=DC1, y=DC2)) +
+  geom_point(data=tecdiff.diffusion.merge[,c("DC1", "DC2")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=ZsG.Cluster), shape=21, size=1.8) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cluster.cols) +
+  #scale_fill_viridis() +
+  facet_wrap(~Age, ncol=4) +
+  guides(fill=guide_legend(title="Cluster", title.theme=element_text(size=14),
+                           override.aes=list(shape=22, size=3))) +
+  NULL
+```
+
+It looks like there might be 3 lineages here, one separated on each of the first 3 diffusion components.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.75, fig.width=11.75}
+ggplot(tecdiff.diffusion.merge, aes(x=DC2, y=DC3)) +
+  geom_point(data=tecdiff.diffusion.merge[,c("DC2", "DC3")], 
+             fill='grey80', size=1, alpha=0.5, shape=21) +
+  geom_point(aes(fill=ZsG.Cluster), shape=21, size=1.8) +
+  theme_mike() +
+  scale_fill_manual(values=zsg.cluster.cols) +
+  #scale_fill_viridis() +
+  facet_wrap(~Age, ncol=4) +
+  guides(fill=guide_legend(title="Cluster", title.theme=element_text(size=14),
+                           override.aes=list(shape=22, size=3))) +
+  NULL
+```
+
+There are still too many trajectories. I'll remove the cTEC clusters 9 and 13.
 
 ```{r, echo=FALSE, warning=FALSE, message=FALSE}
 set.seed(42)

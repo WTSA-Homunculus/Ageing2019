@@ -85,10 +85,10 @@ dsg3.pcent.cellularity <- read.table("~/Dropbox/AgeingExperiment/Data/FACS_PCent
 dsg3.pcent.cellularity$Measure <- "PcEpCam.Dsg3"
 dsg3.pcent.cellularity <- dsg3.pcent.cellularity[!is.na(dsg3.pcent.cellularity$R1), ]
 
-
 thymic.cell.counts <- do.call(rbind.data.frame,
                               list("Total"=thymus.total.cellularity, "Tcell"=tcell.total.cellularity, 
-                                   "cTEC.Total"=ctec.total.cellularity))
+                                   "cTEC.Total"=ctec.total.cellularity, "mTEC.Total"=mtec.total.cellularity,
+                                   "Total.TEC"=tec.total.cellularity))
 # remove empty rows 
 thymic.cell.counts <- thymic.cell.counts[!is.na(thymic.cell.counts$R1), ]
 thymic.cell.melt <- melt(thymic.cell.counts, id.vars=c("Age", "Measure"))
@@ -99,8 +99,8 @@ thymic.cell.melt$Age <- factor(thymic.cell.melt$Age,
 
 ```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.75, fig.width=11.25}
 # summarise the points as the mean +/- SE - joint the mean points with a line
-mean.thymo.count <- apply(thymus.total.cellularity[, c(2:5)], 1, mean)
-sd.thymo.count <- apply(thymus.total.cellularity[, c(2:5)], 1, sd)
+mean.thymo.count <- apply(thymic.cell.counts[thymic.cell.counts$Measure %in% c("Total.Thymus"), c(2:5)], 1, mean)
+sd.thymo.count <- apply(thymic.cell.counts[thymic.cell.counts$Measure %in% c("Total.Thymus"), c(2:5)], 1, sd)
 
 thymic.summ.df <- data.frame("Age"=c("1w", "4w", "16w", "32w", "52w"),
                              "Mean"=mean.thymo.count,
@@ -154,6 +154,255 @@ p.tec.cell <- ggplot(tec.summ.df, aes(x=AgeInt, y=Mean)) +
 ggsave(p.tec.cell,
        filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure1/TEC_cellularity.pdf",
        height=2.25, width=3.25, useDingbats=FALSE)
+
+p.tec.cell
+```
+
+For the supplement we also want to show: 
+
+* thymocyte cellularity
+* thymocyte:TEC ratio
+* cTEC-mTEC dynamics
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.25, fig.width=5.25}
+# summarise the points as the mean +/- SE - joint the mean points with a line
+mean.thymo.count <- apply(thymic.cell.counts[thymic.cell.counts$Measure %in% c("Total.Tcell"), c(2:5)], 1, mean)
+sd.thymo.count <- apply(thymic.cell.counts[thymic.cell.counts$Measure %in% c("Total.Tcell"), c(2:5)], 1, sd)
+
+thymic.summ.df <- data.frame("Age"=c("1w", "4w", "16w", "32w", "52w"),
+                             "Mean"=mean.thymo.count,
+                             "SD"=sd.thymo.count)
+
+thymic.summ.df$Age <- factor(thymic.summ.df$Age,
+                             levels=c("1w", "4w", "16w", "32w", "52w"))
+thymic.summ.df$AgeInt <- as.numeric(as.character(gsub(thymic.summ.df$Age, pattern="w", replacement="")))
+
+p.total.cell <- ggplot(thymic.summ.df, aes(x=AgeInt, y=Mean)) +
+  geom_errorbar(aes(ymin=Mean-SD, ymax=Mean+SD), width=0.5) +
+  geom_line(group=1) +
+  geom_point(shape=21, size=3.5, fill='grey80') +
+  theme_mike() +
+  theme(axis.text=element_text(size=18), axis.title=element_text(size=22)) +
+  scale_x_continuous(labels=c(1, 4, 16, 32, 52), breaks=c(1, 4, 16, 32, 52)) +
+  labs(x="Age (weeks)", y=expression(bold(paste("Thymocyte cellularity (x10"^6, ")")))) +
+  expand_limits(y=0)
+
+ggsave(p.total.cell,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/panels/Thymocyte_cellularity.pdf",
+       height=5.25, width=5.25, useDingbats=FALSE)
+
+p.total.cell
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.25, fig.width=4.25}
+# summarise the points as the mean +/- SE - joint the mean points with a line
+# express the TEC:thymocyte ratio as the % of total thymus cellularity explained by each
+thymo.abs <- thymic.cell.counts[thymic.cell.counts$Measure %in% c("Total.Tcell"), c(2:5)]*1e6
+total.abs <- thymic.cell.counts[thymic.cell.counts$Measure %in% c("Total.Thymus"), c(2:5)]*1e6
+tec.abs <- thymic.cell.counts[thymic.cell.counts$Measure %in% c("Total.TEC"), c(2:5)]*1e3
+
+thymo.pc <- (thymo.abs/total.abs)*100
+tec.pc <- (tec.abs/total.abs)*100
+
+tec.thymo.ratio <- (tec.pc/thymo.pc)
+mean.tec.ratio <- apply(tec.thymo.ratio, 1, mean)
+sd.tec.ratio <- apply(tec.thymo.ratio, 1, sd)
+# tec.summ.df$Measure <- "Total.TEC"
+# thymic.summ.df$Measure <- "Total.Thymocyte"
+# 
+# thymic.ratio.df <- do.call(rbind.data.frame,
+#                            list("tec"=tec.summ.df, "tcell"=thymic.summ.df))
+
+thymic.ratio.df <- data.frame("Age"=c("1w", "4w", "16w", "32w", "52w"),
+                             "Mean"=mean.tec.ratio,
+                             "SD"=sd.tec.ratio)
+
+thymic.ratio.df$Age <- factor(thymic.ratio.df$Age,
+                             levels=c("1w", "4w", "16w", "32w", "52w"))
+thymic.ratio.df$AgeInt <- as.numeric(as.character(gsub(thymic.ratio.df$Age, pattern="w", replacement="")))
+
+p.ratio.cell <- ggplot(thymic.ratio.df, aes(x=AgeInt, y=Mean)) +
+  geom_errorbar(aes(ymin=Mean-SD, ymax=Mean+SD), width=0.5) +
+  geom_line(group=1) +
+  geom_point(shape=21, size=4.5, fill='grey80') +
+  theme_mike() +
+  scale_x_continuous(labels=c(1, 4, 16, 32, 52), breaks=c(1, 4, 16, 32, 52)) +
+  theme(axis.text=element_text(size=18), axis.title=element_text(size=22)) +
+  labs(x="Age (weeks)", y="TEC:thymocyte ratio") +
+  expand_limits(y=0)
+
+ggsave(p.ratio.cell,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/panels/Thymocyte-TEC_ratio.pdf",
+       height=5.25, width=5.25, useDingbats=FALSE)
+
+p.ratio.cell
+```
+
+I can also split this by cTEC and mTEC.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.25, fig.width=4.25}
+# summarise the points as the mean +/- SE - joint the mean points with a line
+# express the TEC:thymocyte ratio as the % of total thymus cellularity explained by each
+thymo.abs <- thymic.cell.counts[thymic.cell.counts$Measure %in% c("Total.Tcell"), c(2:5)]*1e6
+total.abs <- thymic.cell.counts[thymic.cell.counts$Measure %in% c("Total.Thymus"), c(2:5)]*1e6
+mtec.abs <- thymic.cell.counts[thymic.cell.counts$Measure %in% c("Total.mTEC"), c(2:5)]*1e3
+
+thymo.pc <- (thymo.abs/total.abs)*100
+mtec.pc <- (mtec.abs/total.abs)*100
+
+mtec.thymo.ratio <- (mtec.pc/thymo.pc)
+mean.mtec.ratio <- apply(mtec.thymo.ratio, 1, mean)
+sd.mtec.ratio <- apply(mtec.thymo.ratio, 1, sd)
+# tec.summ.df$Measure <- "Total.TEC"
+# thymic.summ.df$Measure <- "Total.Thymocyte"
+# 
+# thymic.ratio.df <- do.call(rbind.data.frame,
+#                            list("tec"=tec.summ.df, "tcell"=thymic.summ.df))
+
+mthymic.ratio.df <- data.frame("Age"=c("1w", "4w", "16w", "32w", "52w"),
+                             "Mean"=mean.mtec.ratio,
+                             "SD"=sd.mtec.ratio)
+
+mthymic.ratio.df$Age <- factor(mthymic.ratio.df$Age,
+                             levels=c("1w", "4w", "16w", "32w", "52w"))
+mthymic.ratio.df$AgeInt <- as.numeric(as.character(gsub(mthymic.ratio.df$Age, pattern="w", replacement="")))
+mthymic.ratio.df$TEC <- "mTEC"
+
+p.ratio.mtec <- ggplot(mthymic.ratio.df, aes(x=AgeInt, y=Mean)) +
+  geom_errorbar(aes(ymin=Mean-SD, ymax=Mean+SD), width=0.5) +
+  geom_line(group=1) +
+  geom_point(shape=21, size=4.5, fill='grey80') +
+  theme_mike() +
+  scale_x_continuous(labels=c(1, 4, 16, 32, 52), breaks=c(1, 4, 16, 32, 52)) +
+  theme(axis.text=element_text(size=18), axis.title=element_text(size=22)) +
+  labs(x="Age (weeks)", y="TEC:thymocyte ratio") +
+  expand_limits(y=0)
+
+ggsave(p.ratio.mtec,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/panels/Thymocyte-mTEC_ratio.pdf",
+       height=5.25, width=5.25, useDingbats=FALSE)
+
+p.ratio.mtec
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.25, fig.width=4.25}
+# summarise the points as the mean +/- SE - joint the mean points with a line
+# express the TEC:thymocyte ratio as the % of total thymus cellularity explained by each
+thymo.abs <- thymic.cell.counts[thymic.cell.counts$Measure %in% c("Total.Tcell"), c(2:5)]*1e6
+total.abs <- thymic.cell.counts[thymic.cell.counts$Measure %in% c("Total.Thymus"), c(2:5)]*1e6
+ctec.abs <- thymic.cell.counts[thymic.cell.counts$Measure %in% c("Total.cTEC"), c(2:5)]*1e3
+
+thymo.pc <- (thymo.abs/total.abs)*100
+ctec.pc <- (ctec.abs/total.abs)*100
+
+ctec.thymo.ratio <- (ctec.pc/thymo.pc)
+mean.ctec.ratio <- apply(ctec.thymo.ratio, 1, mean)
+sd.ctec.ratio <- apply(ctec.thymo.ratio, 1, sd)
+# tec.summ.df$Measure <- "Total.TEC"
+# thymic.summ.df$Measure <- "Total.Thymocyte"
+# 
+# thymic.ratio.df <- do.call(rbind.data.frame,
+#                            list("tec"=tec.summ.df, "tcell"=thymic.summ.df))
+
+cthymic.ratio.df <- data.frame("Age"=c("1w", "4w", "16w", "32w", "52w"),
+                             "Mean"=mean.ctec.ratio,
+                             "SD"=sd.ctec.ratio)
+
+cthymic.ratio.df$Age <- factor(cthymic.ratio.df$Age,
+                             levels=c("1w", "4w", "16w", "32w", "52w"))
+cthymic.ratio.df$AgeInt <- as.numeric(as.character(gsub(cthymic.ratio.df$Age, pattern="w", replacement="")))
+cthymic.ratio.df$TEC <- "cTEC"
+
+p.ratio.ctec <- ggplot(cthymic.ratio.df, aes(x=AgeInt, y=Mean)) +
+  geom_errorbar(aes(ymin=Mean-SD, ymax=Mean+SD), width=0.5) +
+  geom_line(group=1) +
+  geom_point(shape=21, size=4.5, fill='grey80') +
+  theme_mike() +
+  scale_x_continuous(labels=c(1, 4, 16, 32, 52), breaks=c(1, 4, 16, 32, 52)) +
+  theme(axis.text=element_text(size=18), axis.title=element_text(size=22)) +
+  labs(x="Age (weeks)", y="TEC:thymocyte ratio") +
+  expand_limits(y=0)
+
+ggsave(p.ratio.ctec,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/panels/Thymocyte-cTEC_ratio.pdf",
+       height=5.25, width=5.25, useDingbats=FALSE)
+
+p.ratio.ctec
+```
+
+Can I put these on the same graph?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.25, fig.width=4.25}
+thymic.ratio.df <- do.call(rbind.data.frame,
+                           list("ctec"=cthymic.ratio.df, "mtec"=mthymic.ratio.df))
+
+tec.col <- c("blue", "orange")
+names(tec.col) <- c("mTEC", "cTEC")
+
+p.ratio.tec <- ggplot(thymic.ratio.df, aes(x=AgeInt, y=Mean)) +
+  geom_errorbar(aes(ymin=Mean-SD, ymax=Mean+SD), width=0.5) +
+  geom_line(aes(group=TEC)) +
+  geom_point(shape=21, size=3.5, aes(fill=TEC)) +
+  theme_mike() +
+  theme(axis.text=element_text(size=18), axis.title=element_text(size=22),
+        legend.text=element_text(size=22), legend.title=element_text(size=22)) +
+  scale_fill_manual(values=tec.col) +
+  scale_x_continuous(labels=c(1, 4, 16, 32, 52), breaks=c(1, 4, 16, 32, 52)) +
+  theme(axis.text=element_text(size=18), axis.title=element_text(size=22)) +
+  labs(x="Age (weeks)", y="TEC:thymocyte ratio") +
+  expand_limits(y=0)
+
+ggsave(p.ratio.tec,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/panels/Thymocyte-allTEC_ratio.pdf",
+       height=5.25, width=5.25, useDingbats=FALSE)
+
+p.ratio.tec
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.75, fig.width=5.25}
+# summarise the points as the mean +/- SE - joint the mean points with a line
+mean.ctec.count <- apply(thymic.cell.counts[thymic.cell.counts$Measure %in% c("Total.cTEC"), c(2:5)], 1, mean)
+sd.ctec.count <- apply(thymic.cell.counts[thymic.cell.counts$Measure %in% c("Total.cTEC"), c(2:5)], 1, sd)
+
+mean.mtec.count <- apply(thymic.cell.counts[thymic.cell.counts$Measure %in% c("Total.mTEC"), c(2:5)], 1, mean)
+sd.mtec.count <- apply(thymic.cell.counts[thymic.cell.counts$Measure %in% c("Total.mTEC"), c(2:5)], 1, sd)
+
+ctec.summ.df <- data.frame("Age"=c("1w", "4w", "16w", "32w", "52w"),
+                           "Mean"=mean.ctec.count,
+                           "SD"=sd.ctec.count)
+ctec.summ.df$TEC <- "cTEC"
+
+mtec.summ.df <- data.frame("Age"=c("1w", "4w", "16w", "32w", "52w"),
+                           "Mean"=mean.mtec.count,
+                           "SD"=sd.mtec.count)
+mtec.summ.df$TEC <- "mTEC"
+tec.summ.df <- do.call(rbind.data.frame,
+                       list("ctec"=ctec.summ.df, "mtec"=mtec.summ.df))
+
+tec.summ.df$Age <- factor(tec.summ.df$Age,
+                             levels=c("1w", "4w", "16w", "32w", "52w"))
+tec.summ.df$AgeInt <- as.numeric(as.character(gsub(tec.summ.df$Age, pattern="w", replacement="")))
+
+tec.col <- c("blue", "orange")
+names(tec.col) <- c("mTEC", "cTEC")
+
+p.tec.cell <- ggplot(tec.summ.df, aes(x=AgeInt, y=Mean)) +
+  geom_errorbar(aes(ymin=Mean-SD, ymax=Mean+SD), width=0.5) +
+  geom_line(aes(group=TEC)) +
+  geom_point(shape=21, size=3.5, aes(fill=TEC)) +
+  theme_mike() +
+  theme(axis.text=element_text(size=18), axis.title=element_text(size=22),
+        legend.text=element_text(size=22), legend.title=element_text(size=22)) +
+  scale_fill_manual(values=tec.col) +
+  scale_x_continuous(labels=c(1, 4, 16, 32, 52), breaks=c(1, 4, 16, 32, 52)) +
+  labs(x="Age (weeks)", y=expression(bold(paste("TEC cellularity (x10"^3, ")")))) +
+  expand_limits(y=0)
+
+ggsave(p.tec.cell,
+       filename="~/Dropbox/AgeingExperiment/Paper/eLife_submission/panels/mTEC-cTEC_cellularity.pdf",
+       height=5.75, width=5.25, useDingbats=FALSE)
 
 p.tec.cell
 ```
@@ -288,7 +537,7 @@ thymus.hvg <- find_hvg(thymus.norm, return.ranks=TRUE, p.threshold=1e-3)
 ```{r, echo=FALSE, warning=FALSE, message=FALSE}
 all.genes <- unique(c(rownames(thymus.norm), rownames(thymus.norm.tra)))
 
-ensembl <- useMart("ensembl", "mmusculus_gene_ensembl", host="grch37.ensembl.org", path="/biomart/martservice")
+ensembl <- useMart("ensembl", "mmusculus_gene_ensembl", path="/biomart/martservice")
 gene_symbol <- getBM(attributes=c('ensembl_gene_id', 'external_gene_name', 'chromosome_name'),
                      filters='ensembl_gene_id', mart=ensembl,
                      values=all.genes)
@@ -343,12 +592,17 @@ thymus.meta$Interpretation[thymus.meta$TFIDF.Cluster == "7"] <- "Mature mTEC"
 thymus.meta$Interpretation[thymus.meta$TFIDF.Cluster == "1"] <- "Post-Aire mTEC"
 thymus.meta$Interpretation[thymus.meta$TFIDF.Cluster == "5"] <- "Tuft-like mTEC"
 thymus.meta$Interpretation[thymus.meta$TFIDF.Cluster == "6"] <- "Proliferating TEC"
-thymus.meta$Interpretation[thymus.meta$TFIDF.Cluster == "8"] <- "eTEC1"
-thymus.meta$Interpretation[thymus.meta$TFIDF.Cluster == "10"] <- "eTEC2"
+thymus.meta$Interpretation[thymus.meta$TFIDF.Cluster == "8"] <- "nTEC"
+thymus.meta$Interpretation[thymus.meta$TFIDF.Cluster == "10"] <- "sTEC"
+
+thymus.meta$Interpretation <- factor(thymus.meta$Interpretation,
+                                     levels=c("nTEC", "sTEC", "Perinatal cTEC", "Mature cTEC",
+                                              "Intertypical TEC", "Proliferating TEC", "Mature mTEC",
+                                              "Post-Aire mTEC", "Tuft-like mTEC"))
 
 inter.cols <- c("#9970ab", "#35978f", "#B0cdc1", "#762a83", "#01665e", "#e7d4e8", "#dfc27d", "#8c510a" ,"#bf812d")
 names(inter.cols) <- c("Post-Aire mTEC", 'Intertypical TEC',' Mature cTEC', 'Tuft-like mTEC', 
-                       'Proliferating TEC', 'Mature mTEC', 'eTEC1', 'Perinatal cTEC', 'eTEC2')
+                       'Proliferating TEC', 'Mature mTEC', 'nTEC', 'Perinatal cTEC', 'sTEC')
 ```
 
 
@@ -415,11 +669,397 @@ age.bar
 ```
 
 ```{r}
-thymus.meta$AgeInt <- as.numeric(as.character(thymus.meta$AgeInt))
+tec.by.sort <- as.data.frame(xtabs(~ CellType + Interpretation + Age, data=thymus.meta))
 
-thymus.meta$TFIDF.Cluster <- factor(thymus.meta$TFIDF.Cluster,
-                                    levels=c(1, 2, 3, 5, 6, 7, 8, 9, 10))
+tec.by.sort$NormFreq <- 0
+tec.by.sort$NormFreq[tec.by.sort$CellType %in% 
+                       c("cTEC") & 
+                       tec.by.sort$Age %in% c("1wk")] <- tec.by.sort$Freq[tec.by.sort$CellType %in% c("cTEC") & 
+                                                                            tec.by.sort$Age %in% c("1wk")]/sum(tec.by.sort$Freq[tec.by.sort$CellType %in% c("cTEC") & tec.by.sort$Age %in% c("1wk")])
+
+tec.by.sort$NormFreq[tec.by.sort$CellType %in% 
+                       c("cTEC") & 
+                       tec.by.sort$Age %in% c("4wk")] <- tec.by.sort$Freq[tec.by.sort$CellType %in% c("cTEC") & 
+                                                                            tec.by.sort$Age %in% c("4wk")]/sum(tec.by.sort$Freq[tec.by.sort$CellType %in% c("cTEC") & tec.by.sort$Age %in% c("4wk")])
+
+tec.by.sort$NormFreq[tec.by.sort$CellType %in% 
+                       c("cTEC") & 
+                       tec.by.sort$Age %in% c("16wk")] <- tec.by.sort$Freq[tec.by.sort$CellType %in% c("cTEC") & 
+                                                                            tec.by.sort$Age %in% c("16wk")]/sum(tec.by.sort$Freq[tec.by.sort$CellType %in% c("cTEC") & tec.by.sort$Age %in% c("16wk")])
+
+tec.by.sort$NormFreq[tec.by.sort$CellType %in% 
+                       c("cTEC") & 
+                       tec.by.sort$Age %in% c("32wk")] <- tec.by.sort$Freq[tec.by.sort$CellType %in% c("cTEC") & 
+                                                                            tec.by.sort$Age %in% c("32wk")]/sum(tec.by.sort$Freq[tec.by.sort$CellType %in% c("cTEC") & tec.by.sort$Age %in% c("32wk")])
+
+tec.by.sort$NormFreq[tec.by.sort$CellType %in% 
+                       c("cTEC") & 
+                       tec.by.sort$Age %in% c("52wk")] <- tec.by.sort$Freq[tec.by.sort$CellType %in% c("cTEC") & 
+                                                                            tec.by.sort$Age %in% c("52wk")]/sum(tec.by.sort$Freq[tec.by.sort$CellType %in% c("cTEC") & tec.by.sort$Age %in% c("52wk")])
+
+
+
+tec.by.sort$NormFreq[tec.by.sort$CellType %in% 
+                       c("mTEChi") & 
+                       tec.by.sort$Age %in% c("1wk")] <- tec.by.sort$Freq[tec.by.sort$CellType %in% c("mTEChi") & 
+                                                                            tec.by.sort$Age %in% c("1wk")]/sum(tec.by.sort$Freq[tec.by.sort$CellType %in% c("mTEChi") & tec.by.sort$Age %in% c("1wk")])
+
+tec.by.sort$NormFreq[tec.by.sort$CellType %in% 
+                       c("mTEChi") & 
+                       tec.by.sort$Age %in% c("4wk")] <- tec.by.sort$Freq[tec.by.sort$CellType %in% c("mTEChi") & 
+                                                                            tec.by.sort$Age %in% c("4wk")]/sum(tec.by.sort$Freq[tec.by.sort$CellType %in% c("mTEChi") & tec.by.sort$Age %in% c("4wk")])
+
+tec.by.sort$NormFreq[tec.by.sort$CellType %in% 
+                       c("mTEChi") & 
+                       tec.by.sort$Age %in% c("16wk")] <- tec.by.sort$Freq[tec.by.sort$CellType %in% c("mTEChi") & 
+                                                                            tec.by.sort$Age %in% c("16wk")]/sum(tec.by.sort$Freq[tec.by.sort$CellType %in% c("mTEChi") & tec.by.sort$Age %in% c("16wk")])
+
+tec.by.sort$NormFreq[tec.by.sort$CellType %in% 
+                       c("mTEChi") & 
+                       tec.by.sort$Age %in% c("32wk")] <- tec.by.sort$Freq[tec.by.sort$CellType %in% c("mTEChi") & 
+                                                                            tec.by.sort$Age %in% c("32wk")]/sum(tec.by.sort$Freq[tec.by.sort$CellType %in% c("mTEChi") & tec.by.sort$Age %in% c("32wk")])
+
+tec.by.sort$NormFreq[tec.by.sort$CellType %in% 
+                       c("mTEChi") & 
+                       tec.by.sort$Age %in% c("52wk")] <- tec.by.sort$Freq[tec.by.sort$CellType %in% c("mTEChi") & 
+                                                                            tec.by.sort$Age %in% c("52wk")]/sum(tec.by.sort$Freq[tec.by.sort$CellType %in% c("mTEChi") & tec.by.sort$Age %in% c("52wk")])
+
+
+tec.by.sort$NormFreq[tec.by.sort$CellType %in% 
+                       c("mTEClo") & 
+                       tec.by.sort$Age %in% c("1wk")] <- tec.by.sort$Freq[tec.by.sort$CellType %in% c("mTEClo") & 
+                                                                            tec.by.sort$Age %in% c("1wk")]/sum(tec.by.sort$Freq[tec.by.sort$CellType %in% c("mTEClo") & tec.by.sort$Age %in% c("1wk")])
+
+tec.by.sort$NormFreq[tec.by.sort$CellType %in% 
+                       c("mTEClo") & 
+                       tec.by.sort$Age %in% c("4wk")] <- tec.by.sort$Freq[tec.by.sort$CellType %in% c("mTEClo") & 
+                                                                            tec.by.sort$Age %in% c("4wk")]/sum(tec.by.sort$Freq[tec.by.sort$CellType %in% c("mTEClo") & tec.by.sort$Age %in% c("4wk")])
+
+tec.by.sort$NormFreq[tec.by.sort$CellType %in% 
+                       c("mTEClo") & 
+                       tec.by.sort$Age %in% c("16wk")] <- tec.by.sort$Freq[tec.by.sort$CellType %in% c("mTEClo") & 
+                                                                            tec.by.sort$Age %in% c("16wk")]/sum(tec.by.sort$Freq[tec.by.sort$CellType %in% c("mTEClo") & tec.by.sort$Age %in% c("16wk")])
+
+tec.by.sort$NormFreq[tec.by.sort$CellType %in% 
+                       c("mTEClo") & 
+                       tec.by.sort$Age %in% c("32wk")] <- tec.by.sort$Freq[tec.by.sort$CellType %in% c("mTEClo") & 
+                                                                            tec.by.sort$Age %in% c("32wk")]/sum(tec.by.sort$Freq[tec.by.sort$CellType %in% c("mTEClo") & tec.by.sort$Age %in% c("32wk")])
+
+tec.by.sort$NormFreq[tec.by.sort$CellType %in% 
+                       c("mTEClo") & 
+                       tec.by.sort$Age %in% c("52wk")] <- tec.by.sort$Freq[tec.by.sort$CellType %in% c("mTEClo") & 
+                                                                            tec.by.sort$Age %in% c("52wk")]/sum(tec.by.sort$Freq[tec.by.sort$CellType %in% c("mTEClo") & tec.by.sort$Age %in% c("52wk")])
+
+
+tec.by.sort$NormFreq[tec.by.sort$CellType %in% 
+                       c("gmTEC") & 
+                       tec.by.sort$Age %in% c("1wk")] <- tec.by.sort$Freq[tec.by.sort$CellType %in% c("gmTEC") & 
+                                                                            tec.by.sort$Age %in% c("1wk")]/sum(tec.by.sort$Freq[tec.by.sort$CellType %in% c("gmTEC") & tec.by.sort$Age %in% c("1wk")])
+
+tec.by.sort$NormFreq[tec.by.sort$CellType %in% 
+                       c("gmTEC") & 
+                       tec.by.sort$Age %in% c("4wk")] <- tec.by.sort$Freq[tec.by.sort$CellType %in% c("gmTEC") & 
+                                                                            tec.by.sort$Age %in% c("4wk")]/sum(tec.by.sort$Freq[tec.by.sort$CellType %in% c("gmTEC") & tec.by.sort$Age %in% c("4wk")])
+
+tec.by.sort$NormFreq[tec.by.sort$CellType %in% 
+                       c("gmTEC") & 
+                       tec.by.sort$Age %in% c("16wk")] <- tec.by.sort$Freq[tec.by.sort$CellType %in% c("gmTEC") & 
+                                                                            tec.by.sort$Age %in% c("16wk")]/sum(tec.by.sort$Freq[tec.by.sort$CellType %in% c("gmTEC") & tec.by.sort$Age %in% c("16wk")])
+
+tec.by.sort$NormFreq[tec.by.sort$CellType %in% 
+                       c("gmTEC") & 
+                       tec.by.sort$Age %in% c("32wk")] <- tec.by.sort$Freq[tec.by.sort$CellType %in% c("gmTEC") & 
+                                                                            tec.by.sort$Age %in% c("32wk")]/sum(tec.by.sort$Freq[tec.by.sort$CellType %in% c("gmTEC") & tec.by.sort$Age %in% c("32wk")])
+
+tec.by.sort$NormFreq[tec.by.sort$CellType %in% 
+                       c("gmTEC") & 
+                       tec.by.sort$Age %in% c("52wk")] <- tec.by.sort$Freq[tec.by.sort$CellType %in% c("gmTEC") & 
+                                                                            tec.by.sort$Age %in% c("52wk")]/sum(tec.by.sort$Freq[tec.by.sort$CellType %in% c("gmTEC") & tec.by.sort$Age %in% c("52wk")])
 ```
+
+
+```{r}
+ggplot(tec.by.sort, aes(x=Interpretation, y=NormFreq, fill=CellType)) +
+  geom_bar(stat='identity', position='fill') +
+  theme_classic() +
+  scale_fill_manual(values=cell.cols) +
+  labs(x="Cluster", y="% Cells") +
+  scale_y_continuous(breaks=c(0, 0.5, 1)) +
+  theme(axis.text=element_text(size=14, face='bold', colour='black'),
+        axis.text.x=element_text(angle=90, hjust=1, vjust=0.5, size=14, face='bold', colour='black'),
+        axis.title=element_text(size=16, face='bold')) +
+  guides(fill=FALSE) +
+  #coord_flip() +
+  NULL
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# sort type matrix age X Sort Type
+sort.matrix <- dcast(data=alltec.freq, formula = Age ~ TEC, value.var='Freq')
+rownames(sort.matrix) <- sort.matrix$Age
+sort.matrix <- as.matrix(sort.matrix[, -1])
+colnames(sort.matrix) <- c("gmTEC", "mTEClo", "mTEChi", "cTEC", "EpCAM")
+sort.matrix <- sort.matrix[, c("cTEC", "gmTEC", "mTEChi", "mTEClo")]/100
+
+
+# setup the frequencies in a matrix for ease of calculations - 1 per age
+tec.freq.mat.wk1 <- dcast(data=tec.by.sort[tec.by.sort$Age %in% c("1wk"), ],
+                           formula= CellType ~ Interpretation, value.var='NormFreq')
+rownames(tec.freq.mat.wk1) <- tec.freq.mat.wk1$CellType
+tec.freq.mat.wk1 <- as.matrix(tec.freq.mat.wk1[, -1])
+
+tec.freq.mat.wk4 <- dcast(data=tec.by.sort[tec.by.sort$Age %in% c("4wk"), ],
+                           formula= CellType ~ Interpretation, value.var='NormFreq')
+rownames(tec.freq.mat.wk4) <- tec.freq.mat.wk4$CellType
+tec.freq.mat.wk4 <- as.matrix(tec.freq.mat.wk4[, -1])
+
+tec.freq.mat.wk16 <- dcast(data=tec.by.sort[tec.by.sort$Age %in% c("16wk"), ],
+                           formula= CellType ~ Interpretation, value.var='NormFreq')
+rownames(tec.freq.mat.wk16) <- tec.freq.mat.wk16$CellType
+tec.freq.mat.wk16 <- as.matrix(tec.freq.mat.wk16[, -1])
+
+tec.freq.mat.wk32 <- dcast(data=tec.by.sort[tec.by.sort$Age %in% c("32wk"), ],
+                           formula= CellType ~ Interpretation, value.var='NormFreq')
+rownames(tec.freq.mat.wk32) <- tec.freq.mat.wk32$CellType
+tec.freq.mat.wk32 <- as.matrix(tec.freq.mat.wk32[, -1])
+
+tec.freq.mat.wk52 <- dcast(data=tec.by.sort[tec.by.sort$Age %in% c("52wk"), ],
+                           formula= CellType ~ Interpretation, value.var='NormFreq')
+rownames(tec.freq.mat.wk52) <- tec.freq.mat.wk52$CellType
+tec.freq.mat.wk52 <- as.matrix(tec.freq.mat.wk52[, -1])
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+wk1.estimate <- sort.matrix[1, ] %*% tec.freq.mat.wk1
+wk4.estimate <- sort.matrix[2, ] %*% tec.freq.mat.wk4
+wk16.estimate <- sort.matrix[3, ] %*% tec.freq.mat.wk16
+wk32.estimate <- sort.matrix[4, ] %*% tec.freq.mat.wk32
+wk52.estimate <- sort.matrix[5, ] %*% tec.freq.mat.wk52
+
+TEC.estimates <- do.call(rbind, list("wk1"=wk1.estimate, "wk4"=wk4.estimate, 
+                                     "wk16"=wk16.estimate, "wk32"=wk32.estimate, "wk52"=wk52.estimate))
+rownames(TEC.estimates) <- c("Wk1", "Wk4", "Wk16", "Wk32", "Wk52")
+```
+
+
+### ZsG labelling estimates by clusters
+
+```{r}
+thymus.meta$AggCellType <- thymus.meta$CellType
+thymus.meta$AggCellType[thymus.meta$CellType %in% c("mTEChi", "mTEClo", "gmTEC")] <- "mTEC"
+
+tec.by.aggsort <- as.data.frame(xtabs(~ AggCellType + Interpretation + Age, data=thymus.meta))
+
+
+tec.by.aggsort$NormFreq <- 0
+tec.by.aggsort$NormFreq[tec.by.aggsort$AggCellType %in% 
+                       c("cTEC") & 
+                       tec.by.aggsort$Age %in% c("1wk")] <- tec.by.aggsort$Freq[tec.by.aggsort$AggCellType %in% c("cTEC") & 
+                                                                            tec.by.aggsort$Age %in% c("1wk")]/sum(tec.by.aggsort$Freq[tec.by.aggsort$AggCellType %in% c("cTEC") & tec.by.aggsort$Age %in% c("1wk")])
+
+tec.by.aggsort$NormFreq[tec.by.aggsort$AggCellType %in% 
+                       c("cTEC") & 
+                       tec.by.aggsort$Age %in% c("4wk")] <- tec.by.aggsort$Freq[tec.by.aggsort$AggCellType %in% c("cTEC") & 
+                                                                            tec.by.aggsort$Age %in% c("4wk")]/sum(tec.by.aggsort$Freq[tec.by.aggsort$AggCellType %in% c("cTEC") & tec.by.aggsort$Age %in% c("4wk")])
+
+tec.by.aggsort$NormFreq[tec.by.aggsort$AggCellType %in% 
+                       c("cTEC") & 
+                       tec.by.aggsort$Age %in% c("16wk")] <- tec.by.aggsort$Freq[tec.by.aggsort$AggCellType %in% c("cTEC") & 
+                                                                            tec.by.aggsort$Age %in% c("16wk")]/sum(tec.by.aggsort$Freq[tec.by.aggsort$AggCellType %in% c("cTEC") & tec.by.aggsort$Age %in% c("16wk")])
+
+tec.by.aggsort$NormFreq[tec.by.aggsort$AggCellType %in% 
+                       c("cTEC") & 
+                       tec.by.aggsort$Age %in% c("32wk")] <- tec.by.aggsort$Freq[tec.by.aggsort$AggCellType %in% c("cTEC") & 
+                                                                            tec.by.aggsort$Age %in% c("32wk")]/sum(tec.by.aggsort$Freq[tec.by.aggsort$AggCellType %in% c("cTEC") & tec.by.aggsort$Age %in% c("32wk")])
+
+tec.by.aggsort$NormFreq[tec.by.aggsort$AggCellType %in% 
+                       c("cTEC") & 
+                       tec.by.aggsort$Age %in% c("52wk")] <- tec.by.aggsort$Freq[tec.by.aggsort$AggCellType %in% c("cTEC") & 
+                                                                            tec.by.aggsort$Age %in% c("52wk")]/sum(tec.by.aggsort$Freq[tec.by.aggsort$AggCellType %in% c("cTEC") & tec.by.aggsort$Age %in% c("52wk")])
+
+
+
+tec.by.aggsort$NormFreq[tec.by.aggsort$AggCellType %in% c("mTEC") & 
+                          tec.by.aggsort$Age %in% c("1wk")] <- tec.by.aggsort$Freq[tec.by.aggsort$AggCellType %in% c("mTEC") & 
+                                                                                     tec.by.aggsort$Age %in% c("1wk")]/sum(tec.by.aggsort$Freq[tec.by.aggsort$AggCellType %in% c("mTEC") & tec.by.aggsort$Age %in% c("1wk")])
+
+tec.by.aggsort$NormFreq[tec.by.aggsort$AggCellType %in% 
+                       c("mTEC") & 
+                       tec.by.aggsort$Age %in% c("4wk")] <- tec.by.aggsort$Freq[tec.by.aggsort$AggCellType %in% c("mTEC") & 
+                                                                            tec.by.aggsort$Age %in% c("4wk")]/sum(tec.by.aggsort$Freq[tec.by.aggsort$AggCellType %in% c("mTEC") & tec.by.aggsort$Age %in% c("4wk")])
+
+tec.by.aggsort$NormFreq[tec.by.aggsort$AggCellType %in% 
+                       c("mTEC") & 
+                       tec.by.aggsort$Age %in% c("16wk")] <- tec.by.aggsort$Freq[tec.by.aggsort$AggCellType %in% c("mTEC") & 
+                                                                            tec.by.aggsort$Age %in% c("16wk")]/sum(tec.by.aggsort$Freq[tec.by.aggsort$AggCellType %in% c("mTEC") & tec.by.aggsort$Age %in% c("16wk")])
+
+tec.by.aggsort$NormFreq[tec.by.aggsort$AggCellType %in% 
+                       c("mTEC") & 
+                       tec.by.aggsort$Age %in% c("32wk")] <- tec.by.aggsort$Freq[tec.by.aggsort$AggCellType %in% c("mTEC") & 
+                                                                            tec.by.aggsort$Age %in% c("32wk")]/sum(tec.by.aggsort$Freq[tec.by.aggsort$AggCellType %in% c("mTEC") & tec.by.aggsort$Age %in% c("32wk")])
+
+tec.by.aggsort$NormFreq[tec.by.aggsort$AggCellType %in% 
+                       c("mTEC") & 
+                       tec.by.aggsort$Age %in% c("52wk")] <- tec.by.aggsort$Freq[tec.by.aggsort$AggCellType %in% c("mTEC") & 
+                                                                            tec.by.aggsort$Age %in% c("52wk")]/sum(tec.by.aggsort$Freq[tec.by.aggsort$AggCellType %in% c("mTEC") & tec.by.aggsort$Age %in% c("52wk")])
+```
+
+
+```{r}
+ggplot(tec.by.aggsort, aes(x=Interpretation, y=NormFreq, fill=AggCellType)) +
+  geom_bar(stat='identity', position='fill') +
+  theme_classic() +
+  scale_fill_manual(values=c("#f2a242", "#6ab2f9")) +
+  labs(x="Cluster", y="% Cells") +
+  scale_y_continuous(breaks=c(0, 0.5, 1)) +
+  theme(axis.text=element_text(size=14, face='bold', colour='black'),
+        axis.text.x=element_text(angle=90, hjust=1, vjust=0.5, size=14, face='bold', colour='black'),
+        axis.title=element_text(size=16, face='bold')) +
+  guides(fill=FALSE) +
+  #coord_flip() +
+  NULL
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# sort type matrix age X Sort Type
+alltec.freq$AggSort <- as.character(alltec.freq$TEC)
+alltec.freq$AggSort[alltec.freq$TEC %in% c("Dsg3+TEC", "mTEC.lo", "mTEC.hi")] <- "mTEC"
+
+aggsort.matrix <- dcast(data=alltec.freq, formula = Age ~ AggSort, value.var='Freq', fun.aggregate=sum)
+rownames(aggsort.matrix) <- aggsort.matrix$Age
+aggsort.matrix <- as.matrix(aggsort.matrix[, -1])
+colnames(aggsort.matrix) <- c("cTEC", "mTEC", "EpCAM")
+aggsort.matrix <- aggsort.matrix[, c("cTEC", "mTEC")]/100
+
+
+# setup the frequencies in a matrix for ease of calculations - 1 per age
+agg.tec.freq.mat.wk1 <- dcast(data=tec.by.aggsort[tec.by.aggsort$Age %in% c("1wk"), ],
+                           formula= AggCellType ~ Interpretation, value.var='NormFreq')
+rownames(agg.tec.freq.mat.wk1) <- agg.tec.freq.mat.wk1$AggCellType
+agg.tec.freq.mat.wk1 <- as.matrix(agg.tec.freq.mat.wk1[, -1])
+
+agg.tec.freq.mat.wk4 <- dcast(data=tec.by.aggsort[tec.by.aggsort$Age %in% c("4wk"), ],
+                           formula= AggCellType ~ Interpretation, value.var='NormFreq')
+rownames(agg.tec.freq.mat.wk4) <- agg.tec.freq.mat.wk4$AggCellType
+agg.tec.freq.mat.wk4 <- as.matrix(agg.tec.freq.mat.wk4[, -1])
+
+agg.tec.freq.mat.wk16 <- dcast(data=tec.by.aggsort[tec.by.aggsort$Age %in% c("16wk"), ],
+                           formula= AggCellType ~ Interpretation, value.var='NormFreq')
+rownames(agg.tec.freq.mat.wk16) <- agg.tec.freq.mat.wk16$AggCellType
+agg.tec.freq.mat.wk16 <- as.matrix(agg.tec.freq.mat.wk16[, -1])
+
+agg.tec.freq.mat.wk32 <- dcast(data=tec.by.aggsort[tec.by.aggsort$Age %in% c("32wk"), ],
+                           formula= AggCellType ~ Interpretation, value.var='NormFreq')
+rownames(agg.tec.freq.mat.wk32) <- agg.tec.freq.mat.wk32$AggCellType
+agg.tec.freq.mat.wk32 <- as.matrix(agg.tec.freq.mat.wk32[, -1])
+
+agg.tec.freq.mat.wk52 <- dcast(data=tec.by.aggsort[tec.by.aggsort$Age %in% c("52wk"), ],
+                           formula= AggCellType ~ Interpretation, value.var='NormFreq')
+rownames(agg.tec.freq.mat.wk52) <- agg.tec.freq.mat.wk52$AggCellType
+agg.tec.freq.mat.wk52 <- as.matrix(agg.tec.freq.mat.wk52[, -1])
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# now use these to estimate the % of labelled TEC in each group given the labelling efficiency in the cTEC and mTEC 
+# compartments.
+zsg.props <- read.table("~/Dropbox/AgeingExperiment/ZsG_labelling/Mean_props.txt",
+                        sep="\t", header=TRUE, stringsAsFactors=FALSE)
+
+wk1.zsg.matrix <- dcast(data=zsg.props[zsg.props$Age %in% c("1wk"), ],
+                        formula= CellType ~ Chase, value.var='Mean')
+rownames(wk1.zsg.matrix) <- wk1.zsg.matrix$CellType
+wk1.zsg.matrix <- as.matrix(wk1.zsg.matrix[, -1])
+
+wk4.zsg.matrix <- dcast(data=zsg.props[zsg.props$Age %in% c("4wk"), ],
+                        formula= CellType ~ Chase, value.var='Mean')
+rownames(wk4.zsg.matrix) <- wk4.zsg.matrix$CellType
+wk4.zsg.matrix <- as.matrix(wk4.zsg.matrix[, -1])
+
+wk16.zsg.matrix <- dcast(data=zsg.props[zsg.props$Age %in% c("16wk"), ],
+                        formula= CellType ~ Chase, value.var='Mean')
+rownames(wk16.zsg.matrix) <- wk16.zsg.matrix$CellType
+wk16.zsg.matrix <- as.matrix(wk16.zsg.matrix[, -1])
+
+# multiple each of the mean % ZsG+ by the expected proportions
+# I need to aggregate the numbers for the mTEC sorts
+tectype.zsg.wk1 <- as.data.frame(t(wk1.zsg.matrix) %*% agg.tec.freq.mat.wk1)
+tectype.zsg.wk1$Age <- "1wk"
+tectype.zsg.wk1$Chase <- rownames(tectype.zsg.wk1)
+
+tectype.zsg.wk4 <- as.data.frame(t(wk4.zsg.matrix) %*% agg.tec.freq.mat.wk4)
+tectype.zsg.wk4$Age <- "4wk"
+tectype.zsg.wk4$Chase <- rownames(tectype.zsg.wk4)
+
+tectype.zsg.wk16 <- as.data.frame(t(wk16.zsg.matrix) %*% agg.tec.freq.mat.wk16)
+tectype.zsg.wk16$Age <- "16wk"
+tectype.zsg.wk16$Chase <- rownames(tectype.zsg.wk16)
+
+tec.zsg.label <- do.call(rbind.data.frame, list(tectype.zsg.wk1, tectype.zsg.wk4, tectype.zsg.wk16))
+tec.zsg.label.melt <- melt(tec.zsg.label, id.vars=c("Age", "Chase"))
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=7.95}
+tec.zsg.label.melt$Age <- ordered(tec.zsg.label.melt$Age,
+                                  levels=c("1wk", "4wk", "16wk"))
+tec.zsg.label.melt$Chase <- ordered(tec.zsg.label.melt$Chase,
+                                    levels=c("2d", "28d"),
+                                    labels=c("2 days", "28 days"))
+
+ggplot(tec.zsg.label.melt, aes(x=Age, y=value*100, fill=Chase, group=Chase)) +
+  geom_line() +
+  geom_point(shape=21, size=2.5) +
+  facet_wrap(~variable) +
+  theme_mike() +
+  scale_fill_manual(values=c("blue", "orange")) +
+  theme(legend.position="right", legend.direction="vertical",
+        strip.background=element_rect(colour='white', fill='white')) +
+  guides(fill=guide_legend(override.aes=list(size=4))) +
+  labs(x="Labelling Age", y="Expected %EpCam+ cells ZsG+")
+  
+
+ggsave("~/Dropbox/AgeingExperiment/ZsG_labelling/Mean_props_byTECtype.pdf",
+       height=4.95, width=7.95, useDingbats=FALSE)
+
+ggsave("~/Dropbox/AgeingExperiment/ZsG_labelling/Mean_props_byTECtype.png",
+       height=4.95, width=7.95, dpi=300)
+```
+
+Compare this to the % of cells in the broader TEC types that are ZsG+
+
+```{r, echo=FALSE, warning=FALSE, fig.height=2.95, fig.width=4.95}
+zsg.props$Chase <- ordered(zsg.props$Chase,
+                           levels=c("2d", "28d"),
+                           labels=c("2 days", "28 days"))
+zsg.props$Age <- ordered(zsg.props$Age,
+                         levels=c("1wk", "4wk", "16wk"))
+
+ggplot(zsg.props, aes(x=Age, y=Mean*100, fill=Chase, group=Chase)) +
+  geom_line() +
+  geom_point(shape=21, size=2.5) +
+  facet_wrap(~CellType) +
+  theme_mike() +
+  scale_fill_manual(values=c("blue", "orange")) +
+  theme(legend.position="right", legend.direction="vertical",
+        strip.background=element_rect(colour='white', fill='white')) +
+  guides(fill=guide_legend(override.aes=list(size=4))) +
+  labs(x="Labelling Age", y="%EpCam+ cells ZsG+")
+
+ggsave("~/Dropbox/AgeingExperiment/ZsG_labelling/Mean_props_byTEC.pdf",
+       height=2.95, width=4.95, useDingbats=FALSE)
+
+ggsave("~/Dropbox/AgeingExperiment/ZsG_labelling/Mean_props_byTEC.png",
+       height=2.95, width=4.95, dpi=300)
+```
+
+
+
+
+
 
 ### Marker gene plots
 
@@ -484,7 +1124,8 @@ markers.melt.merge$TFIDF.Cluster <- factor(markers.melt.merge$TFIDF.Cluster,
 ```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.25, fig.width=15.75}
 # order the marker genes by their cluster
 markers.melt.merge$variable <- factor(markers.melt.merge$variable,
-                                      levels=c("Krt80", "Spink5", "Ccl21a", "Krt5", "Prss16", "Cxcl12", "Avil", "Trpm5", "Ccna2", "Pbk",
+                                      levels=c("Krt80", "Spink5", "Ccl21a", "Krt5", "Prss16", "Cxcl12", "Avil", "Trpm5",
+                                               "Ccna2", "Pbk",
                                                "Aire", "Cd52", "Cd177", "Car8", "Gper1", "Syngr1", "Dpt", "Sod3"))
 
 marker.box <- ggplot(markers.melt.merge, aes(x=TFIDF.Cluster, y=value, fill=TFIDF.Cluster)) +
@@ -534,14 +1175,14 @@ marker.annot$Cluster[marker.annot$TFIDF.Cluster == "7"] <- "Mature mTEC"
 marker.annot$Cluster[marker.annot$TFIDF.Cluster == "1"] <- "Post-Aire mTEC"
 marker.annot$Cluster[marker.annot$TFIDF.Cluster == "5"] <- "Tuft-like mTEC"
 marker.annot$Cluster[marker.annot$TFIDF.Cluster == "6"] <- "Proliferating TEC"
-marker.annot$Cluster[marker.annot$TFIDF.Cluster == "8"] <- "eTEC1"
-marker.annot$Cluster[marker.annot$TFIDF.Cluster == "10"] <- "eTEC2"
+marker.annot$Cluster[marker.annot$TFIDF.Cluster == "8"] <- "nTEC"
+marker.annot$Cluster[marker.annot$TFIDF.Cluster == "10"] <- "sTEC"
 
 names(inter.cols) <- c("Post-Aire mTEC", 'Intertypical TEC','Mature cTEC', 'Tuft-like mTEC', 
-                       'Proliferating TEC', 'Mature mTEC', 'eTEC1', 'Perinatal cTEC', 'eTEC2')
+                       'Proliferating TEC', 'Mature mTEC', 'nTEC', 'Perinatal cTEC', 'sTEC')
 
 marker.annot$Cluster <- factor(marker.annot$Cluster,
-                                 levels=c("eTEC2", "eTEC1", "Perinatal cTEC",
+                                 levels=c("sTEC", "nTEC", "Perinatal cTEC",
                                           "Mature cTEC", "Intertypical TEC", "Proliferating TEC", 
                                           "Mature mTEC", "Post-Aire mTEC", "Tuft-like mTEC"))
 marker.annot <- data.frame("Cluster"=marker.annot[, c("Cluster")])
@@ -771,8 +1412,8 @@ alltec.res$Interpretation[alltec.res$Cluster == "Cluster7"] <- "Mature mTEC"
 alltec.res$Interpretation[alltec.res$Cluster == "Cluster1"] <- "Post-Aire mTEC"
 alltec.res$Interpretation[alltec.res$Cluster == "Cluster5"] <- "Tuft-like mTEC"
 alltec.res$Interpretation[alltec.res$Cluster == "Cluster6"] <- "Proliferating TEC"
-alltec.res$Interpretation[alltec.res$Cluster == "Cluster8"] <- "eTEC1"
-alltec.res$Interpretation[alltec.res$Cluster == "Cluster10"] <- "eTEC2"
+alltec.res$Interpretation[alltec.res$Cluster == "Cluster8"] <- "nTEC"
+alltec.res$Interpretation[alltec.res$Cluster == "Cluster10"] <- "sTEC"
 
 alltec.res$Label <- alltec.res$Interpretation
 alltec.res$Label[alltec.res$Sig == 0] <- ""
@@ -817,8 +1458,8 @@ quad.alltec.res$Interpretation[quad.alltec.res$Cluster == "Cluster7"] <- "Mature
 quad.alltec.res$Interpretation[quad.alltec.res$Cluster == "Cluster1"] <- "Post-Aire mTEC"
 quad.alltec.res$Interpretation[quad.alltec.res$Cluster == "Cluster5"] <- "Tuft-like mTEC"
 quad.alltec.res$Interpretation[quad.alltec.res$Cluster == "Cluster6"] <- "Proliferating TEC"
-quad.alltec.res$Interpretation[quad.alltec.res$Cluster == "Cluster8"] <- "eTEC1"
-quad.alltec.res$Interpretation[quad.alltec.res$Cluster == "Cluster10"] <- "eTEC2"
+quad.alltec.res$Interpretation[quad.alltec.res$Cluster == "Cluster8"] <- "nTEC"
+quad.alltec.res$Interpretation[quad.alltec.res$Cluster == "Cluster10"] <- "sTEC"
 
 quad.alltec.res$Label <- quad.alltec.res$Interpretation
 quad.alltec.res$Label[quad.alltec.res$Sig == 0] <- ""
@@ -955,8 +1596,8 @@ all.scaled.sum$Interpretation[all.scaled.sum$Cluster == "Cluster7"] <- "Mature m
 all.scaled.sum$Interpretation[all.scaled.sum$Cluster == "Cluster1"] <- "Post-Aire mTEC"
 all.scaled.sum$Interpretation[all.scaled.sum$Cluster == "Cluster5"] <- "Tuft-like mTEC"
 all.scaled.sum$Interpretation[all.scaled.sum$Cluster == "Cluster6"] <- "Proliferating TEC"
-all.scaled.sum$Interpretation[all.scaled.sum$Cluster == "Cluster8"] <- "eTEC1"
-all.scaled.sum$Interpretation[all.scaled.sum$Cluster == "Cluster10"] <- "eTEC2"
+all.scaled.sum$Interpretation[all.scaled.sum$Cluster == "Cluster8"] <- "nTEC"
+all.scaled.sum$Interpretation[all.scaled.sum$Cluster == "Cluster10"] <- "sTEC"
 
 alltec.abundance <- ggplot(all.scaled.sum, aes(x=Age, y=Freq, fill=Age)) +
   geom_boxplot(alpha=0.6) +
@@ -1075,8 +1716,8 @@ alltec.freq$Interpretation[alltec.freq$Cluster == "Cluster7"] <- "Mature mTEC"
 alltec.freq$Interpretation[alltec.freq$Cluster == "Cluster1"] <- "Post-Aire mTEC"
 alltec.freq$Interpretation[alltec.freq$Cluster == "Cluster5"] <- "Tuft-like mTEC"
 alltec.freq$Interpretation[alltec.freq$Cluster == "Cluster6"] <- "Proliferating TEC"
-alltec.freq$Interpretation[alltec.freq$Cluster == "Cluster8"] <- "eTEC1"
-alltec.freq$Interpretation[alltec.freq$Cluster == "Cluster10"] <- "eTEC2"
+alltec.freq$Interpretation[alltec.freq$Cluster == "Cluster8"] <- "nTEC"
+alltec.freq$Interpretation[alltec.freq$Cluster == "Cluster10"] <- "sTEC"
 ```
 
 
@@ -1195,9 +1836,9 @@ for(i in seq_along(cell.ids)){
 tra.down.df <- as.data.frame(t(rbind.data.frame(genes.list.down)))
 tra.down.df$Sample <- cell.ids
 
-tra.down.merge <- merge(tra.down.df, thymus.meta[, c("Sample", "PC1", "PC2", "Dim1", "Dim2", "SumFactor", "AgeInt", 
-                                           "AgeFactor", "TFIDF.Cluster", "Aire", "SortDay", "CellType")],
-                   by='Sample')
+tra.down.merge <- merge(tra.down.df, thymus.meta[, c("Sample", "PC1", "PC2", "Dim1", "Dim2", "SumFactor", "AgeInt", "Interpretation",
+                                                     "AgeFactor", "TFIDF.Cluster", "Aire", "SortDay", "CellType")],
+                        by='Sample')
 ```
 
 
@@ -1219,7 +1860,7 @@ maturemTEChi.meta <- tissue.cast.meta[tissue.cast.meta$TFIDF.Cluster %in% c(7), 
 maturemTEChi.dge <- DGEList(maturemTEChi.counts)
 
 # filter low abundance clusters?
-maturemTEChi.meta$AgeInt <- maturemTEChi.meta$AgeInt
+maturemTEChi.meta$AgeInt <- ordered(as.numeric(as.character(maturemTEChi.meta$AgeInt)))
 
 maturemTEChi.design <- model.matrix(~ 1 + AgeInt, maturemTEChi.meta)
 maturemTEChi.dge <- estimateDisp(maturemTEChi.dge, maturemTEChi.design, prior.df=0)
@@ -1242,33 +1883,163 @@ names(sig.cols) <- c(0, 1)
 
 maturemTEChi.res$Label <- gsub(maturemTEChi.res$Label, pattern="_", replacement=" ")
 maturemTEChi.res$Label <- gsub(maturemTEChi.res$Label, pattern="\\.", replacement=" ")
+```
 
 
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.25, fig.width=4.95}
 # volcano plots are probably better here
 maturemTEChi.volcano <- ggplot(maturemTEChi.res, aes(x=logFC, y=-log10(FDR), fill=Sig)) +
   geom_vline(mapping=aes(xintercept=0), linetype='dashed', colour='grey') +
   geom_point(shape=21, size=3) +
-  scale_x_continuous(limits=c(-0.02, 0.02), oob=squish) +
+  scale_x_continuous(limits=c(-1, 1), oob=squish) +
   scale_fill_manual(values=sig.cols) +
   theme_mike() +
   guides(fill=FALSE) +
   theme(axis.text=element_text(size=11)) +
   labs(x=expression(bold(paste(Delta, " change in #TRAs detected (per week)"))),
        y=expression(bold(paste("-log"[10], " FDR")))) +
-  geom_label_repel(aes(label=Label),
+  geom_text_repel(aes(label=Label),
                    colour='black',
                    fill='white',
-                   nudge_y=-0.1,
-                   size=3)
+                   force=50,
+                   size=5)
 
 ggsave(maturemTEChi.volcano,
-       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Figure4/Mature_mTEC-GeneAbundance-volcano.png",
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Mature_mTEC-GeneAbundance-volcano.png",
        height=4.25, width=4.95, dpi=300)
+
+ggsave(maturemTEChi.volcano,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/Mature_mTEC-GeneAbundance-volcano.pdf",
+       height=4.25, width=4.95, device=cairo_pdf)
 
 maturemTEChi.volcano
 ```
 
 We want to see how some of these changes occur over age, i.e. are they continuous, or is there a sudden change between 2 ages?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+mtecMat.exprs <- as.data.frame(tissue.cast[, tissue.cast.meta$Sample[tissue.cast.meta$TFIDF.Cluster %in% c(7)]])
+mtecMat.exprs$Tissue <- rownames(mtecMat.exprs)
+mtecMat.melt <- melt(mtecMat.exprs, id.vars=c("Tissue"))
+colnames(mtecMat.melt) <- c("Tissue", "Sample", "Count")
+mtecMat.merge <- merge(mtecMat.melt, thymus.meta[, c("Sample", "AgeFactor", "AgeInt", "Interpretation", "TFIDF.Cluster", "SortDay", "CellType")], by='Sample')
+
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.25, fig.width=9.5}
+# pick the top 20 tissues
+mtecMat.plot <- mtecMat.merge[mtecMat.merge$Tissue %in% c("Epididymis", "Myeloid_precursor", "Pancreas", "Eye",
+                                                          "Testis", "Stomach", "Forelimb", "Macrophage"), ]
+mtecMat.plot$Tissue <- factor(mtecMat.plot$Tissue,
+                              levels=c("Epididymis", "Myeloid_precursor", "Pancreas", "Eye",
+                                       "Testis", "Stomach", "Forelimb", "Macrophage"),
+                              labels=c("Epididymis", "Myeloid precursor", "Pancreas", "Eye",
+                                       "Testis", "Stomach", "Forelimb", "Macrophage"))
+
+mtecMat.p <- ggplot(mtecMat.plot, 
+                    aes(x=AgeFactor, y=Count, fill=AgeFactor)) +
+  # geom_jitter(size=1, alpha=0.5) +
+  # stat_summary(geom="crossbar", fun=median, colour='grey30') +
+  geom_violin() +
+  geom_boxplot(width=0.25, fill='white') +
+  theme_mike() +
+  guides(colour=FALSE, fill=FALSE) +
+  scale_fill_manual(values=age.cols) +
+  labs(x="Age (weeks)", y="Number of genes expressed") +
+  facet_wrap(~Tissue, scales="free_y", nrow=2) +
+  theme(strip.background=element_rect(fill='white', colour='white'),
+        axis.text=element_text(size=14),
+        axis.title=element_text(size=14),
+        strip.text=element_text(size=14)) +
+  scale_x_discrete(labels=c(1, 4, 16, 32, 52)) +
+  NULL 
+
+ggsave(mtecMat.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/mTEC-pGE_categories-top6_smooth.png",
+       height=4.25, width=9.50, dpi=300)
+
+ggsave(mtecMat.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/mTEC-pGE_categories-top6_smooth.pdf",
+       height=4.25, width=9.50, device=cairo_pdf)
+
+mtecMat.p
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.25, fig.width=3.25}
+# pick the top 20 tissues
+AireDep.plot <- mtecMat.merge[mtecMat.merge$Tissue %in% c("Aire.Depend", "Aire.Enhance"), ]
+AireDep.plot$Tissue <- factor(AireDep.plot$Tissue,
+                              levels=c("Aire.Depend", "Aire.Enhance"),
+                              labels=c("Aire Dependent", "Aire Enhanced"))
+
+AireDep.p <- ggplot(AireDep.plot, 
+                    aes(x=AgeFactor, y=Count, fill=AgeFactor)) +
+  # geom_jitter(size=1, alpha=0.5) +
+  # stat_summary(geom="crossbar", fun=median, colour='grey30') +
+  geom_violin() +
+  geom_boxplot(width=0.25, fill='white') +
+  theme_mike() +
+  guides(colour=FALSE, fill=FALSE) +
+  scale_fill_manual(values=age.cols) +
+  labs(x="Age (weeks)", y="Number of genes expressed") +
+  facet_wrap(~Tissue, scales="free_y", nrow=2) +
+  theme(strip.background=element_rect(fill='white', colour='white'),
+        axis.text=element_text(size=14),
+        axis.title=element_text(size=14),
+        strip.text=element_text(size=14)) +
+  scale_x_discrete(labels=c(1, 4, 16, 32, 52)) +
+  NULL 
+
+ggsave(AireDep.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/mTEC-pGE_Aire-categories-top6_smooth.png",
+       height=4.25, width=3.25, dpi=300)
+
+ggsave(AireDep.p,
+       filename="~/Dropbox/AgeingExperiment/Paper/Figures/mTEC-pGE_Aire-categories-top6_smooth.pdf",
+       height=4.25, width=3.25, device=cairo_pdf)
+
+AireDep.p
+```
+
+Also show _Aire_ and _Fezf2_ expression in mature mTEC.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.width=2.75, fig.height=4.25}
+pge.goi <- c("Aire", "Fezf2")
+pge.goi.ensembl <- gene_symbol[gene_symbol$external_gene_name %in% pge.goi, ]$ensembl_gene_id
+mtec.cells <- thymus.meta$Sample[thymus.meta$TFIDF.Cluster %in% c(7)]
+
+matMtec.exprs <- as.data.frame(t(thymus.norm[pge.goi.ensembl, mtec.cells]))
+colnames(matMtec.exprs) <- gene_symbol[colnames(matMtec.exprs), ]$external_gene_name
+matMtec.exprs$Sample <- colnames(thymus.norm[, mtec.cells])
+
+mTEC.merge <- merge(matMtec.exprs, thymus.meta[, c("Sample", "PC1", "PC2", "Dim1", "Dim2", "SumFactor", "AgeInt", "Interpretation",
+                                                   "AgeFactor", "TFIDF.Cluster", "SortDay", "CellType")],
+                    by='Sample')
+mTEC.melt <- melt(mTEC.merge, id.vars=colnames(thymus.meta[, c("Sample", "PC1", "PC2", "Dim1", "Dim2", "SumFactor", "AgeInt", 
+                                                               "Interpretation", 
+                                                               "AgeFactor", "TFIDF.Cluster", "SortDay", "CellType")]))
+
+ggplot(mTEC.melt, aes(x=AgeFactor, y=value, fill=AgeFactor)) +
+  geom_violin() +
+  geom_boxplot(fill='white', width=0.2) +
+  theme_mike() +
+  scale_fill_manual(values=age.cols) +
+  facet_wrap(~variable, nrow=2, scales="free_y") +
+  labs(x="Age (weeks)", y=expression(bold(paste("Log"[10], " expression")))) +
+  theme(strip.background=element_rect(fill='white', colour='white'),
+        axis.text=element_text(size=14),
+        axis.title=element_text(size=14),
+        strip.text=element_text(size=14, face="bold.italic")) +
+  scale_x_discrete(labels=c(1, 4, 16, 32, 52)) +
+  guides(colour=FALSE, fill=FALSE) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Paper/Figures/mTEC-pGE_regulators_violin.pdf",
+       height=4.25, width=2.75, useDingbats=FALSE)
+```
+
 
 ```{r, echo=FALSE, warning=FALSE, message=FALSE}
 mtecMat.exprs <- as.data.frame(tissue.cast[, tissue.cast.meta$Sample[tissue.cast.meta$TFIDF.Cluster %in% c(7)]])
@@ -1369,6 +2140,132 @@ postAiremTEC.volcano
 ```
 
 These volcano plots that show no associations can go in the supplementary figures.
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.25, fig.width=9.95}
+ggplot(tra.down.merge,
+       aes(x=AgeFactor, y=Aire.Enhance, fill=Interpretation)) +
+  geom_boxplot() +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  expand_limits(y=c(0)) +
+  theme(legend.position="right", legend.direction="vertical") +
+  labs(x="Age (weeks)", y="# Aire-enhanced TRAs") +
+  scale_x_discrete(labels=c(1, 4, 16, 32, 52)) +
+  guides(fill=guide_legend(title.position="top", title="TEC type"))
+  
+
+ggsave("~/Dropbox/AgeingExperiment/Paper/eLife_submission/Aire_enhancedTRAs-TECtype-boxplot.pdf",
+       height=3.25, width=9.95, useDingbats=FALSE)
+```
+
+There are more Aire-enhanced TRAs in the post-Aire cluster 1.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.25, fig.width=9.95}
+ggplot(tra.down.merge,
+       aes(x=AgeFactor, y=Aire.Depend, fill=Interpretation)) +
+  geom_boxplot() +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  expand_limits(y=c(0)) +
+  theme(legend.position="right", legend.direction="vertical") +
+  labs(x="Age (weeks)", y="# Aire-dependent TRAs") +
+  scale_x_discrete(labels=c(1, 4, 16, 32, 52)) +
+  guides(fill=guide_legend(title.position="top", title="TEC type"))
+  
+
+ggsave("~/Dropbox/AgeingExperiment/Paper/eLife_submission/Aire_dependentTRAs-TECtype-boxplot.pdf",
+       height=3.25, width=9.95, useDingbats=FALSE)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.25, fig.width=9.95}
+ggplot(tra.down.merge,
+       aes(x=AgeFactor, y=TRA.Detect, fill=Interpretation)) +
+  geom_boxplot() +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  expand_limits(y=c(0)) +
+  theme(legend.position="right", legend.direction="vertical") +
+  labs(x="Age (weeks)", y="# Total TRAs") +
+  scale_x_discrete(labels=c(1, 4, 16, 32, 52)) +
+  guides(fill=guide_legend(title.position="top", title="TEC type"))
+  
+
+ggsave("~/Dropbox/AgeingExperiment/Paper/eLife_submission/TotalTRAs-TECtype-boxplot.pdf",
+       height=3.25, width=9.95, useDingbats=FALSE)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3.25, fig.width=9.95}
+ggplot(tra.down.merge,
+       aes(x=AgeFactor, y=Detected, fill=Interpretation)) +
+  geom_boxplot() +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  expand_limits(y=c(0)) +
+  theme(legend.position="right", legend.direction="vertical") +
+  labs(x="Age (weeks)", y="# Total Genes") +
+  scale_x_discrete(labels=c(1, 4, 16, 32, 52)) +
+  guides(fill=guide_legend(title.position="top", title="TEC type"))
+  
+
+ggsave("~/Dropbox/AgeingExperiment/Paper/eLife_submission/TotalGenes-TECtype-boxplot.pdf",
+       height=3.25, width=9.95, useDingbats=FALSE)
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.75, fig.width=7.95}
+ggplot(tra.down.merge,
+       aes(x=AgeFactor, y=(TRA.Detect/Detected)*100, fill=Interpretation)) +
+  geom_boxplot() +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  expand_limits(y=c(0)) +
+  theme(legend.position="right", legend.direction="vertical",
+        legend.title=element_text(size=18, face="bold"),
+        legend.text=element_text(size=14),
+        axis.text=element_text(size=16),
+        axis.title=element_text(size=18)) +
+  labs(x="Age (weeks)", y="% TRA Genes") +
+  scale_x_discrete(labels=c(1, 4, 16, 32, 52)) +
+  guides(fill=guide_legend(title.position="top", title="TEC type"))
+  
+
+ggsave("~/Dropbox/AgeingExperiment/Paper/eLife_submission/PercentTRAs-TECtype-boxplot.pdf",
+       height=4.75, width=7.95, useDingbats=FALSE)
+```
+
+
+These boxplots and the above volcano plot can go in the supplementary figures as confirmation of the difference between mature and post-Aire mTEC.  For the main figures 
+I want to use the mTEC maturation gradient.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=12.95, fig.width=18.95}
+tra.down.melt <- melt(tra.down.merge, id.vars=c("Sample", "Detected", "TRA.Detect", "Aire.Depend", "Aire.Enhance", "non-TRA", "housekeeping",
+                                                "PC1", "PC2", "Dim1", "Dim2", "SumFactor", "AgeInt", "Interpretation", "AgeFactor",
+                                                "TFIDF.Cluster", "Aire", "SortDay", "CellType"))
+tra.down.melt$variable <- as.character(tra.down.melt$variable)
+# only show the TRA categories with mean > 2 counts in all cells
+tra.names <- colnames(tra.down.df[, c(6:(ncol(tra.down.df)-1))])
+keep.tra <- colMeans(tra.down.df[, c(6:(ncol(tra.down.df)-1))]) > 2
+
+ggplot(tra.down.melt[tra.down.melt$variable %in% tra.names[keep.tra], ],
+       aes(x=AgeFactor, y=value, fill=Interpretation)) +
+  geom_boxplot() +
+  theme_mike() +
+  scale_fill_manual(values=inter.cols) +
+  expand_limits(y=c(0)) +
+  theme(legend.position="right", legend.direction="vertical") +
+  facet_wrap(~variable, scales="free_y", ncol=3) +
+  labs(x="Age (weeks)", y="# TRAs in cell") +
+  scale_x_discrete(labels=c(1, 4, 16, 32, 52)) +
+  guides(fill=guide_legend(title.position="top", title="TEC type"))
+
+ggsave("~/Dropbox/AgeingExperiment/Paper/eLife_submission/Revision/AllTRA_byTECtype-boxplot.pdf",
+       height=12.95, width=18.95, useDingbats=FALSE)
+```
+
+
+
 
 ## Comparison of post-Aire and mature mTEC pGE
 

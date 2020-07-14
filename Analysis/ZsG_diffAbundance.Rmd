@@ -31,13 +31,14 @@ library(cydar)
 library(edgeR)
 library(RColorBrewer)
 library(DropletUtils)
+library(scales)
 source("~/Dropbox/R_sessions/SingleCellFunctions/single_cell_functions.R")
 source("~/Dropbox/R_sessions/GGMike/theme_mike.R")
 ```
 
 
 ```{r}
-zsg.meta <- read.table("~/CI_filesystem/mnt/scratchb/jmlab/morgan02/10X/Thymus_ZsG/ZsG_GOI_metadata.tsv",
+zsg.meta <- read.table("~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ZsG_GOI_metadata.tsv",
                        sep="\t", header=TRUE, stringsAsFactors=FALSE)
 
 n.clusters <- length(unique(zsg.meta$ZsG.Cluster))
@@ -48,7 +49,7 @@ zsg.meta$ZsG.Cluster <- factor(zsg.meta$ZsG.Cluster,
 zsg.meta$Age <- factor(zsg.meta$Age,
                        levels=c("Wk1", "Wk4", "Wk16"),
                        labels=c("Wk1", "Wk4", "Wk16"))
-zsg.meta$Rep <- gsub(zsg.meta$CellOrigin, pattern="Run[1-2]", replacement="")
+zsg.meta$Rep <- gsub(zsg.meta$CellOrigin, pattern="([1-4])([A-Za-z]+Run[0-3]+)", replacement="\\1")
 ```
 
 The first analysis needs to ignore the ZsG+/- labelling  count clusters
@@ -111,23 +112,23 @@ thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster6")] <- "mTEC.4"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster20")] <- "mTEC.5"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster22")] <- "mTEC.6"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster16")] <- "mTEC.7"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster4")] <- "iTEC.1"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster7")] <- "iTEC.2"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster10")] <- "iTEC.3"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster11")] <- "iTEC.4"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster4")] <- "Intertypical.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster7")] <- "Intertypical.TEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster10")] <- "Intertypical.TEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster11")] <- "Intertypical.TEC.4"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster9")] <- "cTEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster13")] <- "cTEC.2"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster23")] <- "eTEC1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster23")] <- "nTEC"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster8")] <- "New.TEC.1"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster21")] <- "New.TEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster8")] <- "Thymocyte:cTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster21")] <- "Thymocyte:cTEC.2"
 
 zsg.volc.p <- ggplot(thymus.res, aes(x=logFC, y=-log10(FDR), fill=Sig)) +
   geom_point(shape=21, size=3) +
@@ -139,6 +140,8 @@ zsg.volc.p <- ggplot(thymus.res, aes(x=logFC, y=-log10(FDR), fill=Sig)) +
 ggsave(zsg.volc.p,
        filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_ageOnly-volcano.pdf",
        height=4.15, width=3.75, useDingbats=FALSE)
+
+zsg.volc.p
 ```
 
 
@@ -151,7 +154,7 @@ clust.prop.df$Age <- unlist(lapply(strsplit(clust.prop.df$Sample, fixed=TRUE, sp
 clust.prop.df$Age <- factor(clust.prop.df$Age,
                             levels=c("Wk1", "Wk4", "Wk16"),
                             labels=c("Wk1", "Wk4", "Wk16"))
-clust.prop.df$Rep <- unlist(lapply(strsplit(clust.prop.df$Sample, fixed=TRUE, split="_"), FUN=function(X) paste0(X[3])))
+clust.prop.df$Rep <- unlist(lapply(strsplit(clust.prop.df$Sample, fixed=TRUE, split="_"), FUN=function(X) paste0(X[2])))
 
 zsg.cols <- c("#8745b5", "#13cf00")
 names(zsg.cols) <- c("ZsGn", "ZsGp")
@@ -161,7 +164,7 @@ names(age.cols) <- c("Wk1", "Wk4", "Wk16", "32wk", "52wk")
 ```
 
 
-```{r}
+```{r, fig.height=6.75, fig.width=7.75}
 # add interpretations to the clusters
 clust.prop.df$TECtype <- "Unknown"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster1")] <- "mTEC.1"
@@ -171,23 +174,23 @@ clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster6")] <- "mTEC.4"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster20")] <- "mTEC.5"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster22")] <- "mTEC.6"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster16")] <- "mTEC.7"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster4")] <- "iTEC.1"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster7")] <- "iTEC.2"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster10")] <- "iTEC.3"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster11")] <- "iTEC.4"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster4")] <- "Intertypical.TEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster7")] <- "Intertypical.TEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster10")] <- "Intertypical.TEC.3"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster11")] <- "Intertypical.TEC.4"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster9")] <- "cTEC.1"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster13")] <- "cTEC.2"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster23")] <- "eTEC1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster23")] <- "nTEC"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster8")] <- "New.TEC.1"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster21")] <- "New.TEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster8")] <- "Thymocyte:cTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster21")] <- "Thymocyte:cTEC.2"
 
 age.fdr.p <- ggplot(clust.prop.df[clust.prop.df$ZsG.Cluster %in% thymus.res[is.sig, ]$Cluster, ],
                     aes(x=Age, y=Freq, fill=Age)) +
@@ -219,23 +222,23 @@ thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster6")] <- "mTEC.4"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster20")] <- "mTEC.5"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster22")] <- "mTEC.6"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster16")] <- "mTEC.7"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster4")] <- "iTEC.1"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster7")] <- "iTEC.2"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster10")] <- "iTEC.3"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster11")] <- "iTEC.4"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster4")] <- "Intertypical.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster7")] <- "Intertypical.TEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster10")] <- "Intertypical.TEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster11")] <- "Intertypical.TEC.4"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster9")] <- "cTEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster13")] <- "cTEC.2"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster23")] <- "eTEC1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster23")] <- "nTEC"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster8")] <- "New.TEC.1"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster21")] <- "New.TEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster8")] <- "Thymocyte:cTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster21")] <- "Thymocyte:cTEC.2"
 
 write.table(thymus.res,
             file="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_ageOnly.tsv",
@@ -281,7 +284,7 @@ Can I rescale the proportions based on the sampling bias as we expect them to ha
 downsample the ZsG+ samples to  the same total counts as the ZsG-
 
 ```{r}
-prop.1st <- table(zsg.meta$SortType[grepl(zsg.meta$Rep, pattern="1st")])[1]/table(zsg.meta$SortType[grepl(zsg.meta$Rep, pattern="1st")])[2]
+prop.1st <- table(zsg.meta$SortType[grepl(zsg.meta$Rep, pattern="1")])[1]/table(zsg.meta$SortType[grepl(zsg.meta$Rep, pattern="1")])[2]
 prop.2nd.run1 <- table(zsg.meta$SortType[grepl(zsg.meta$CellOrigin, pattern="2ndRun1")])[1]/table(zsg.meta$SortType[grepl(zsg.meta$CellOrigin, pattern="2ndRun1")])[2]
 prop.2nd.run2 <- table(zsg.meta$SortType[grepl(zsg.meta$CellOrigin, pattern="2ndRun2")])[1]/table(zsg.meta$SortType[grepl(zsg.meta$CellOrigin, pattern="2ndRun2")])[2]
 prop.3rd.run1 <- table(zsg.meta$SortType[grepl(zsg.meta$CellOrigin, pattern="3rdRun1")])[1]/table(zsg.meta$SortType[grepl(zsg.meta$CellOrigin, pattern="3rdRun1")])[2]
@@ -344,23 +347,23 @@ clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster6")] <- "mTEC.4"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster20")] <- "mTEC.5"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster22")] <- "mTEC.6"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster16")] <- "mTEC.7"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster4")] <- "iTEC.1"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster7")] <- "iTEC.2"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster10")] <- "iTEC.3"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster11")] <- "iTEC.4"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster4")] <- "Intertypical.TEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster7")] <- "Intertypical.TEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster10")] <- "Intertypical.TEC.3"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster11")] <- "Intertypical.TEC.4"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster9")] <- "cTEC.1"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster13")] <- "cTEC.2"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster23")] <- "eTEC1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster23")] <- "nTEC"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster8")] <- "New.TEC.1"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster21")] <- "New.TEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster8")] <- "Thymocyte:cTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster21")] <- "Thymocyte:cTEC.2"
 
 fdr.p  <- ggplot(clust.prop.df[clust.prop.df$ZsG.Cluster %in% thymus.res[is.sig, ]$Cluster, ],
        aes(x=Age, y=Freq)) +
@@ -413,23 +416,23 @@ thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster6")] <- "mTEC.4"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster20")] <- "mTEC.5"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster22")] <- "mTEC.6"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster16")] <- "mTEC.7"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster4")] <- "iTEC.1"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster7")] <- "iTEC.2"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster10")] <- "iTEC.3"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster11")] <- "iTEC.4"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster4")] <- "Intertypical.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster7")] <- "Intertypical.TEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster10")] <- "Intertypical.TEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster11")] <- "Intertypical.TEC.4"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster9")] <- "cTEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster13")] <- "cTEC.2"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster23")] <- "eTEC1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster23")] <- "nTEC"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster8")] <- "New.TEC.1"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster21")] <- "New.TEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster8")] <- "Thymocyte:cTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster21")] <- "Thymocyte:cTEC.2"
 
 write.table(thymus.res,
             file="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_Downsample_byAge_ZsG.tsv",
@@ -458,7 +461,7 @@ summary(is.sig)
 ```
 
 
-```{r}
+```{r, fig.height=9.75, fig.width=11.75}
 eps <- max(abs(thymus.res$logFC))
 axis.max <- eps + (eps*0.1)
 
@@ -485,23 +488,23 @@ clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster6")] <- "mTEC.4"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster20")] <- "mTEC.5"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster22")] <- "mTEC.6"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster16")] <- "mTEC.7"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster4")] <- "iTEC.1"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster7")] <- "iTEC.2"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster10")] <- "iTEC.3"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster11")] <- "iTEC.4"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster4")] <- "Intertypical.TEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster7")] <- "Intertypical.TEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster10")] <- "Intertypical.TEC.3"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster11")] <- "Intertypical.TEC.4"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster9")] <- "cTEC.1"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster13")] <- "cTEC.2"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster23")] <- "eTEC1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster23")] <- "nTEC"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster8")] <- "New.TEC.1"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster21")] <- "New.TEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster8")] <- "Thymocyte:cTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster21")] <- "Thymocyte:cTEC.2"
 
 clust.prop.df$Sort <- factor(clust.prop.df$Sort,
                              levels=c("ZsGn", "ZsGp"),
@@ -563,23 +566,23 @@ thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster6")] <- "mTEC.4"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster20")] <- "mTEC.5"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster22")] <- "mTEC.6"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster16")] <- "mTEC.7"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster4")] <- "iTEC.1"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster7")] <- "iTEC.2"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster10")] <- "iTEC.3"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster11")] <- "iTEC.4"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster4")] <- "Intertypical.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster7")] <- "Intertypical.TEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster10")] <- "Intertypical.TEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster11")] <- "Intertypical.TEC.4"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster9")] <- "cTEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster13")] <- "cTEC.2"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster23")] <- "eTEC1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster23")] <- "nTEC"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster8")] <- "New.TEC.1"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster21")] <- "New.TEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster8")] <- "Thymocyte:cTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster21")] <- "Thymocyte:cTEC.2"
 
 write.table(thymus.res,
             file="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_Downsample_byZsG.tsv",
@@ -646,7 +649,7 @@ clust.prop.df$Rep <- unlist(lapply(strsplit(clust.prop.df$Sample, fixed=TRUE, sp
 ```
 
 
-```{r}
+```{r, fig.height=9.75, fig.width=11.75}
 # add interpretations to the clusters
 clust.prop.df$TECtype <- "Unknown"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster1")] <- "mTEC.1"
@@ -656,23 +659,23 @@ clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster6")] <- "mTEC.4"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster20")] <- "mTEC.5"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster22")] <- "mTEC.6"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster16")] <- "mTEC.7"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster4")] <- "iTEC.1"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster7")] <- "iTEC.2"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster10")] <- "iTEC.3"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster11")] <- "iTEC.4"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster4")] <- "Intertypical.TEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster7")] <- "Intertypical.TEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster10")] <- "Intertypical.TEC.3"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster11")] <- "Intertypical.TEC.4"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster9")] <- "cTEC.1"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster13")] <- "cTEC.2"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster23")] <- "eTEC1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster23")] <- "nTEC"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster8")] <- "New.TEC.1"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster21")] <- "New.TEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster8")] <- "Thymocyte:cTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster21")] <- "Thymocyte:cTEC.2"
 
 clust.prop.df$Sort <- factor(clust.prop.df$Sort,
                              levels=c("ZsGn", "ZsGp"),
@@ -698,7 +701,7 @@ weighted.fdr.p
 ```
 
 
-```{r}
+```{r, fig.height=9.75, fig.width=11.75}
 weighted.fdr.p <- ggplot(clust.prop.df[clust.prop.df$ZsG.Cluster %in% thymus.res[is.sig, ]$Cluster, ],
                          aes(x=Age, y=Freq)) +
   stat_summary(fun.y=median, fun.ymin=median, fun.ymax=median,
@@ -729,23 +732,23 @@ thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster6")] <- "mTEC.4"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster20")] <- "mTEC.5"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster22")] <- "mTEC.6"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster16")] <- "mTEC.7"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster4")] <- "iTEC.1"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster7")] <- "iTEC.2"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster10")] <- "iTEC.3"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster11")] <- "iTEC.4"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster4")] <- "Intertypical.TEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster7")] <- "Intertypical.TEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster10")] <- "Intertypical.TEC.3"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster11")] <- "Intertypical.TEC.4"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster9")] <- "cTEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster13")] <- "cTEC.2"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster23")] <- "eTEC1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster23")] <- "nTEC"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster8")] <- "New.TEC.1"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster21")] <- "New.TEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster8")] <- "Thymocyte:cTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster21")] <- "Thymocyte:cTEC.2"
 
 write.table(thymus.res,
             file="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_Downsample_Age_adjustZsG.tsv",
@@ -832,47 +835,62 @@ clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster9")] <- "cTEC.1"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster13")] <- "cTEC.2"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster23")] <- "eTEC1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster23")] <- "nTEC"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
 clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster8")] <- "New.TEC.1"
-clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster21")] <- "New.TEC.2"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster8")] <- "Thymocyte:cTEC.1"
+clust.prop.df$TECtype[clust.prop.df$ZsG.Cluster %in% c("Cluster21")] <- "Thymocyte:cTEC.2"
 
 clust.prop.df$Sort <- factor(clust.prop.df$Sort,
-                             levels=c("ZsGn", "ZsG+"),
+                             levels=c("ZsGn", "ZsGp"),
                              labels=c("ZsG-", "ZsG+"))
 
+# define a function to calculate the same number of breaks on the y-axis
+equal_breaks <- function(n = 3, s = 0.05, ...){
+  function(x){
+    # rescaling
+    d <- s * diff(range(x)) / (1+2*s)
+    round(seq(min(x)+d, max(x)-d, length=n), 3)
+  }
+}
+
+clust.prop.df$AgeInt <- as.numeric(gsub(as.character(clust.prop.df$Age), pattern="Wk", replacement=""))
+
 weighted.fdr.p <- ggplot(clust.prop.df[clust.prop.df$ZsG.Cluster %in% thymus.res[is.sig, ]$Cluster, ],
-                         aes(x=Age, y=Freq, fill=Sort)) +
-  stat_summary(fun.y=median, fun.ymin=median, fun.ymax=median,
-               geom="crossbar", width=0.5) +
-  geom_jitter(shape=21, size=3, position=position_jitterdodge(jitter.width=0.1)) +
+                         aes(x=log2(AgeInt), y=Freq, fill=Sort)) +
+  geom_smooth(method="lm", aes(colour=Sort)) +
+  # stat_summary(fun.y=median, fun.ymin=median, fun.ymax=median, #lwd=1.25,
+  #              geom="point", shape=21, size=3, position=position_jitterdodge(jitter.width=0.1)) +
+  #geom_jitter(shape=21, size=3.5, position=position_jitterdodge(jitter.width=0.1)) +
   theme_mike() +
   scale_fill_manual(values=zsg.cols) +
+  scale_colour_manual(values=zsg.cols) +
   facet_wrap(~TECtype, scales="free", ncol=2) +
-  expand_limits(y=c(0)) +
   theme(strip.background=element_rect(fill='white', colour='white'),
         strip.text=element_text(size=24),
         axis.title=element_text(size=18),
         axis.text=element_text(size=18),
         legend.text=element_text(size=18)) +
   labs(x="Age", y="Proportion") +
-  guides(fill=guide_legend(title="ZsGreen Fraction")) +
+  guides(fill=guide_legend(title="ZsGreen Fraction", override.aes=list(shape=22)),
+         colour=FALSE) +
+  scale_x_continuous(breaks=c(0, 2, 4), labels=c("Wk1", "Wk4", "Wk16")) +
+  expand_limits(y=c(0)) +
   NULL
 
 ggsave(weighted.fdr.p,
-       filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_Downsample_ZsG_interaction-jitter.pdf",
+       filename="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_Downsample_ZsG_interaction-lines.pdf",
        height=11.75, width=7.75, useDingbats=FALSE)
 
 weighted.fdr.p
 ```
 
 
-```{r, fig.height=11.75, fig.width=7.75}
+```{r, fig.height=21.75, fig.width=7.75}
 weighted.fdr.p <- ggplot(clust.prop.df,
                          aes(x=Age, y=Freq, fill=Sort)) +
   stat_summary(fun.y=median, fun.ymin=median, fun.ymax=median,
@@ -917,15 +935,15 @@ thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster9")] <- "cTEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster13")] <- "cTEC.2"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster17")] <- "PostAire.mTEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster19")] <- "PostAire.mTEC.2"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster23")] <- "eTEC1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster23")] <- "nTEC"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster24")] <- "Prolif.TEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster12")] <- "Prolif.TEC.2"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster2")] <- "Prolif.TEC.3"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster15")] <- "Tuft.mTEC.1"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster18")] <- "Tuft.mTEC.2"
 thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster5")] <- "Sca1.TEC.1"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster8")] <- "New.TEC.1"
-thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster21")] <- "New.TEC.2"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster8")] <- "Thymocyte:cTEC.1"
+thymus.res$TECtype[thymus.res$Cluster %in% c("Cluster21")] <- "Thymocyte:cTEC.2"
 
 write.table(thymus.res,
             file="~/Dropbox/AgeingExperiment/ZsG_10X_Exp/ClusterAbundance_Downsample_ZsG_interaction.tsv",
