@@ -1,0 +1,885 @@
+---
+title: "Comparing mouse and mouse thymus"
+output: html_notebook
+---
+
+# Introduction
+
+Comparing our ageing mouse thymus data with mouse TEC from Park _et al_ Science 2020. I need to do this on just the TEC cells.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+library(igraph)
+library(SingleCellExperiment)
+library(scran)
+library(scater)
+library(Matrix)
+library(umap)
+library(irlba)
+library(scales)
+library(viridis)
+library(ggplot2)
+library(biomaRt)
+library(ggthemes)
+library(batchelor)
+library(FNN)
+library(pheatmap)
+source("~/Dropbox/R_sessions/SingleCellFunctions/single_cell_functions.R")
+source("~/Dropbox/R_sessions/GGMike/theme_mike.R")
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+teichmouse.sce <- readRDS(file="~/Dropbox/AgeingExperiment/Human_Thymus/Mouse_SCE.RDS")
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+teichmouse.meta <- read.table("~/Dropbox/AgeingExperiment/Human_Thymus/mouse_obs.csv",
+                         sep="\t", header=TRUE, stringsAsFactors=FALSE)
+```
+
+Estimate size factors and do normalisation first.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+teichmouse.sf <- get_size_factors(teichmouse.sce, cell.sparse=0.95, gene.sparse=0.99)
+teichmouse.sf$Sample <- as.character(teichmouse.sf$Sample)
+rownames(teichmouse.sf) <- teichmouse.sf$Sample
+teichmouse.sce <- teichmouse.sce[, teichmouse.sf$Sample]
+sizeFactors(teichmouse.sce) <- teichmouse.sf[colnames(teichmouse.sce), ]$SumFactor
+teichmouse.sce <- normalize(teichmouse.sce)
+```
+
+```{r}
+sink(file="/dev/null")
+gc()
+sink(file=NULL)
+```
+
+Now HVGs first.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+teichmouse.hvg <- find_hvg(teichmouse.sce, p.threshold=1e-3, return.ranks=TRUE)
+table(teichmouse.hvg$HVG)
+```
+
+~3000 HVGs across all Teichmann mouse thymus cells - I need to subset to just the postnatal ones to make a valid comparison with our mouse TEC.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+teichmouse.meta <- merge(teichmouse.meta, teichmouse.sf, by.x='index', by.y='Sample')
+postnatal.cells <- teichmouse.meta$index[teichmouse.meta$age %in% c("6 days", "4-6 weeks")  & (grepl(teichmouse.meta$cell.types, pattern="TEC"))]
+postnatal.sce <- teichmouse.sce[, postnatal.cells]
+
+saveRDS(postnatal.sce, file="~/Dropbox/AgeingExperiment/Human_Thymus/Postnatal_Teichmann-mouse_SCE.RDS")
+postnatal.hvg <- find_hvg(postnatal.sce, p.threshold=1e-3, return.ranks=TRUE)
+table(postnatal.hvg$HVG)
+```
+
+The bulk of cells are from post-natal thymi.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+postnatal.pca <- prcomp_irlba(as.matrix(t(logcounts(postnatal.sce[postnatal.hvg$HVG, ]))), n=50)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+set.seed(42)
+postnatal.umap <- as.data.frame(umap(as.matrix(postnatal.pca$x[, c(1:20)]),
+                                     n_neighbors=11,
+                                     init='spectral',
+                                     metric='cosine',
+                                     n_components=2,
+                                     min_dist=0.1,
+                                     method='naive')$layout)
+
+colnames(postnatal.umap) <- paste0("UMAP", c(1:2))
+postnatal.umap$CellID <- colnames(postnatal.sce)
+
+postnatal.meta.umap <- merge(teichmouse.meta, postnatal.umap, by.x='index', by.y='CellID')
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=7.25}
+ggplot(postnatal.meta.umap, aes(x=UMAP1, y=UMAP2, colour=cell.types)) +
+  geom_point(size=0.1) +
+  theme_mike() +
+  scale_colour_Publication() +
+  theme(legend.position="right", legend.direction="vertical") +
+  guides(colour=guide_legend(override.aes=list(size=3), ncol=1))
+```
+
+This includes fibroblasts and non-TEC cells. I'll leave these in as a control for the comparison with our cells.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=7.25}
+ggplot(postnatal.meta.umap, aes(x=UMAP1, y=UMAP2, colour=age)) +
+  geom_point(size=0.1) +
+  theme_mike() +
+  scale_colour_Publication() +
+  theme(legend.position="right", legend.direction="vertical") +
+  guides(colour=guide_legend(override.aes=list(size=3), ncol=1))
+```
+
+Hmm, are these batch effects or genuine age-related differences? There's a fair bit of mixing, and there aren't a huge number of 6 day cells.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+goi <- c("Ccl21a", "Krt5", "Aire", "Cd52", "Dclk1", "Avil", "Syngr1", "Chga", "Cd177", "Psmb11", "Prss16", "Krt80", "Spink5", "Lifr",
+         "Ly6d", "Ly6e", "Ly6a", "Fgfr2", "Fgfr3", "Cdk1", "Pdpn", "Plekhb1", "Itgb2", "Dll4", "Cdh2", "Gas1", "Igfbp4", "Mgp", "Apoe", "Gsn", "Anxa1")
+goi.exprs <- as.data.frame(t(logcounts(postnatal.sce[goi, ])))
+goi.exprs$CellID <- colnames(postnatal.sce)
+
+postnatal.goi.merge <- merge(postnatal.meta.umap, goi.exprs, by.x='index', by.y='CellID')
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=7.25}
+ggplot(postnatal.goi.merge, aes(x=UMAP1, y=UMAP2, colour=Ccl21a)) +
+  geom_point(size=0.25) +
+  theme_mike() +
+  scale_colour_viridis() +
+  theme(legend.position="right", legend.direction="vertical") +
+  guides(colour=guide_colourbar(ncol=1, titke.position="top"))
+```
+
+Based on _Ccl21a_ it looks like the intertypical TEC are in amongst the mTEC(I) population again.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=7.25}
+ggplot(postnatal.goi.merge, aes(x=UMAP1, y=UMAP2, colour=Lifr)) +
+  geom_point(size=0.25) +
+  theme_mike() +
+  scale_colour_viridis() +
+  theme(legend.position="right", legend.direction="vertical") +
+  guides(colour=guide_colourbar(ncol=1, titke.position="top"))
+```
+
+_Lifr_ is also a bit sporadic but overlaps mostly with the mTEC(I) that also express _Ccl21a_ - are the mTEC(I) a misclassification?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=7.25}
+ggplot(postnatal.goi.merge, aes(x=UMAP1, y=UMAP2, colour=Ly6a)) +
+  geom_point(size=0.25) +
+  theme_mike() +
+  scale_colour_viridis() +
+  theme(legend.position="right", legend.direction="vertical") +
+  guides(colour=guide_colourbar(ncol=1, titke.position="top"))
+```
+
+This is _Ly6a_, again note the overlap - I think the Intertypical TEC are a subset of the mTEC(I) population.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=7.25}
+ggplot(postnatal.goi.merge, aes(x=UMAP1, y=UMAP2, colour=Pdpn)) +
+  geom_point(size=0.25) +
+  theme_mike() +
+  scale_colour_viridis() +
+  theme(legend.position="right", legend.direction="vertical") +
+  guides(colour=guide_colourbar(ncol=1, titke.position="top"))
+```
+
+_Pdpn_ is most evident in the fibroblasts, but some sporadic expression through the mTEC(I) compartment as well.
+
+Let's try something a bit different, namely use our mouse thymus HVGs to define the Teichmann mouse TEC manifold. 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+mouse.hvgs <- read.table("~/Dropbox/AgeingExperiment/Thymus_HVG.tsv",
+                         sep="\t", header=TRUE, stringsAsFactors=FALSE)
+table(mouse.hvgs$HVG)
+```
+
+There are just shy of 5000 mouse HVGs. I'll use these to define the manifold in the Teichmann mouse cells.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+biomaRt.connection <- useMart("ensembl", "mmusculus_gene_ensembl")
+
+gene.df <- getBM(attributes = c("ensembl_gene_id", "external_gene_name", "chromosome_name"),
+                 mart=biomaRt.connection)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+mouse.hvg.teichmouse <- intersect(rownames(postnatal.sce), gene.df$external_gene_name[gene.df$ensembl_gene_id %in% mouse.hvgs$gene_id[mouse.hvgs$HVG]])
+
+mouse.homolog.pca <- prcomp_irlba(as.matrix(t(logcounts(postnatal.sce[mouse.hvg.teichmouse, ]))), n=50)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+mouse.homolog.umap <- as.data.frame(umap(as.matrix(mouse.homolog.pca$x[, c(1:20)]),
+                                     n_neighbors=7,
+                                     init='spectral',
+                                     metric='cosine',
+                                     n_components=2,
+                                     min_dist=0.75,
+                                     method='naive')$layout)
+
+colnames(mouse.homolog.umap) <- paste0("Homolog.UMAP", c(1:2))
+mouse.homolog.umap$CellID <- colnames(postnatal.sce)
+
+postnatal.homolog.umap <- merge(postnatal.goi.merge, mouse.homolog.umap, by.x='index', by.y='CellID')
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=7.25}
+ggplot(postnatal.homolog.umap, aes(x=Homolog.UMAP1, y=Homolog.UMAP2, colour=cell.types)) +
+  geom_point(size=0.1) +
+  theme_mike() +
+  scale_colour_Publication() +
+  theme(legend.position="right", legend.direction="vertical") +
+  guides(colour=guide_legend(override.aes=list(size=3), ncol=1))
+```
+
+Our mouse HVGs still capture a lot of the variance in the Teichmann data as well. Interesting the mTEC(I) population starts to splinter.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=7.25}
+ggplot(postnatal.homolog.umap, aes(x=Homolog.UMAP1, y=Homolog.UMAP2, colour=age)) +
+  geom_point(size=0.1) +
+  theme_mike() +
+  scale_colour_Publication() +
+  theme(legend.position="right", legend.direction="vertical") +
+  guides(colour=guide_legend(override.aes=list(size=3), ncol=1))
+```
+
+
+OK, I need to do this concretely and map the teichmouse and our mouse data together.
+
+## Combining teichmouse and our mouse data
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+thymus.norm.tra <- read.table("~/Dropbox/AgeingExperiment/Frozen/ThymusQC_SFnorm-ALL.tsv.gz",
+                          sep="\t", h=TRUE, stringsAsFactors=FALSE)
+rownames(thymus.norm.tra) <- thymus.norm.tra$gene_id
+thymus.norm.tra <- thymus.norm.tra[, -ncol(thymus.norm.tra)]
+thymus.norm.tra[is.na(thymus.norm.tra)] <- 0
+
+thymus.meta <- read.table("~/Dropbox/AgeingExperiment/Data/ThymusMarker_tSNE_PCA_meta.tsv",
+                          sep="\t", h=TRUE, stringsAsFactors=FALSE)
+
+# create a variable that represents the ages as a single continuous variable
+thymus.meta$AgeInt <- as.numeric(gsub(thymus.meta$Age, pattern="wk", replacement=""))
+thymus.meta$AgeFactor <- ordered(thymus.meta$Age,
+                                 levels=c("1wk", "4wk", "16wk", "32wk", "52wk"))
+thymus.meta$TFIDF.Cluster <- factor(thymus.meta$TFIDF.Cluster,
+                                    levels=c("1", "2", "3", "4", "5", "6", "7", "8", "9", "10"),
+                                    labels=c("1", "2", "3", "4", "5", "6", "7", "8", "9", "10"))
+
+thymus.meta <- thymus.meta[!thymus.meta$TFIDF.Cluster %in% c(4), ]
+rownames(thymus.meta) <- thymus.meta$Sample
+thymus.meta <- thymus.meta[intersect(thymus.meta$Sample, colnames(thymus.norm.tra)), ]
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+thymus.norm.tra <- thymus.norm.tra[, intersect(thymus.meta$Sample, colnames(thymus.norm.tra))]
+mouse.sce <- SingleCellExperiment(assays=list(counts=as.matrix(thymus.norm.tra)))
+rownames(thymus.meta) <- thymus.meta$Sample
+sizeFactors(mouse.sce) <- thymus.meta[colnames(mouse.sce), ]$SumFactors
+mouse.sce <- scater::normalize(mouse.sce)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+sink(file="/dev/null")
+rm(list=c("thymus.norm.tra"))
+gc()
+sink(file=NULL)
+```
+
+First I'll combine the teichmouse and mouse SCE objects using a set of commonly expressed 1:1 homologous genes.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+mouse.genes <- rownames(mouse.sce)
+teichmouse.genes <- rownames(postnatal.sce)
+
+match.gene.df <- gene.df[gene.df$external_gene_name %in% teichmouse.genes & gene.df$ensembl_gene_id %in% mouse.genes, ]
+match.gene.df <- match.gene.df[!duplicated(match.gene.df$external_gene_name), ]
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# map the teichmouse genes to ensembl IDs
+rownames(match.gene.df) <- match.gene.df$external_gene_name
+teichmouse.homolog.sce <- postnatal.sce[unique(match.gene.df$external_gene_name), ]
+rownames(teichmouse.homolog.sce) <- match.gene.df[rownames(teichmouse.homolog.sce), ]$ensembl_gene_id
+
+mouse.homolog.sce <- mouse.sce[unique(match.gene.df$ensembl_gene_id), ]
+rownames(match.gene.df) <- match.gene.df$ensembl_gene_id
+rownames(mouse.homolog.sce) <- match.gene.df[rownames(mouse.homolog.sce), ]$ensembl_gene_id
+
+combine.homolog.sce <- do.call(cbind, list("mouse"=mouse.homolog.sce, "teichmouse"=teichmouse.homolog.sce))
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# make a combined meta-data
+teichmouse.combine.meta <- postnatal.goi.merge[, c("index", "cell.types", "sample_ID", "age")]
+
+rownames(thymus.meta) <- thymus.meta$Sample
+mouse.combine.meta <- thymus.meta[colnames(mouse.homolog.sce), c("Sample", "TFIDF.Cluster", "Age", "SortDay")]
+mouse.combine.meta$cell.types <- "Unknown"
+mouse.combine.meta$cell.types <- "Unknown"
+mouse.combine.meta$cell.types[mouse.combine.meta$TFIDF.Cluster == "2"] <- "Intertypical TEC"
+mouse.combine.meta$cell.types[mouse.combine.meta$TFIDF.Cluster == "9"] <- "Perinatal cTEC"
+mouse.combine.meta$cell.types[mouse.combine.meta$TFIDF.Cluster == "3"] <- "Mature cTEC"
+mouse.combine.meta$cell.types[mouse.combine.meta$TFIDF.Cluster == "7"] <- "Mature mTEC"
+mouse.combine.meta$cell.types[mouse.combine.meta$TFIDF.Cluster == "1"] <- "Post-Aire mTEC"
+mouse.combine.meta$cell.types[mouse.combine.meta$TFIDF.Cluster == "5"] <- "Tuft-like mTEC"
+mouse.combine.meta$cell.types[mouse.combine.meta$TFIDF.Cluster == "6"] <- "Proliferating TEC"
+mouse.combine.meta$cell.types[mouse.combine.meta$TFIDF.Cluster == "8"] <- "nTEC"
+mouse.combine.meta$cell.types[mouse.combine.meta$TFIDF.Cluster == "10"] <- "sTEC"
+
+colnames(teichmouse.combine.meta) <- c("Sample", "CellType", "Donor", "Age")
+colnames(mouse.combine.meta) <- c("Sample", "Cluster", "Age", "Donor", "CellType")
+teichmouse.combine.meta$Species <- "Mouse.Teich"
+mouse.combine.meta$Species <- "Mouse"
+
+mouse.teichmouse.meta <- do.call(rbind.data.frame, list("teichmouse"=teichmouse.combine.meta,
+                                                   "mouse"=mouse.combine.meta[, c("Sample", "CellType", 
+                                                                                  "Donor", "Age", "Species")]))
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+rownames(match.gene.df) <- match.gene.df$external_gene_name
+mouse.hvg.ensembl <- match.gene.df[mouse.hvg.teichmouse, ]$ensembl_gene_id
+mouse.hvg.ensembl <- mouse.hvg.ensembl[!is.na(mouse.hvg.ensembl)]
+combine.homolog.pca <- prcomp_irlba(as.matrix(t(logcounts(combine.homolog.sce[mouse.hvg.ensembl, ]))), n=50)
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+combine.homolog.umap <- as.data.frame(umap(as.matrix(combine.homolog.pca$x[, c(1:20)]),
+                                           n_neighbors=7,
+                                           init='spectral',
+                                           metric='cosine',
+                                           n_components=2,
+                                           min_dist=0.75,
+                                           method='naive')$layout)
+
+colnames(combine.homolog.umap) <- paste0("Combine.UMAP", c(1:2))
+combine.homolog.umap$Sample <- colnames(combine.homolog.sce)
+combine.umap.merge <- merge(mouse.teichmouse.meta, combine.homolog.umap, by='Sample')
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=7.25}
+ggplot(combine.umap.merge, aes(x=Combine.UMAP1, y=Combine.UMAP2, colour=Species)) +
+  geom_point(size=0.25) +
+  theme_mike() +
+  scale_colour_colorblind() +
+  theme(legend.position="right", legend.direction="vertical") +
+  guides(colour=guide_legend(ncol=1, titke.position="top", override.aes=list(size=3)))
+```
+
+OK - so firstly there is a clear batch effect that needs to be dealt with.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=8.95}
+ggplot(combine.umap.merge, aes(x=Combine.UMAP1, y=Combine.UMAP2, colour=CellType)) +
+  geom_point(size=0.25) +
+  theme_mike() +
+  scale_colour_Publication() +
+  theme(legend.position="right", legend.direction="vertical") +
+  guides(colour=guide_legend(ncol=2, titke.position="top", override.aes=list(size=3)))
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=7.25}
+ggplot(combine.umap.merge, aes(x=Combine.UMAP1, y=Combine.UMAP2, colour=Age)) +
+  geom_point(size=0.25) +
+  theme_mike() +
+  scale_colour_Publication() +
+  theme(legend.position="right", legend.direction="vertical") +
+  guides(colour=guide_legend(ncol=1, titke.position="top", override.aes=list(size=3)))
+```
+
+The ages are much more mixed in the mouse than the teichmouse - is this biological or technical though? I worry the latter. I'll batch correct 
+and re-run the UMAP.
+
+### Teichmann - mouse batch correction
+
+The first step is a cosine normalisation of the gene expression before PCA.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+cosine.teichmouse.mouse <- cosineNorm(logcounts(combine.homolog.sce), subset.row=mouse.hvg.ensembl)
+cosine.pca <- prcomp_irlba(t(cosine.teichmouse.mouse), n=50)
+```
+
+I'll then batch correct the teichmouse data together.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+teichmouse.cells <- combine.umap.merge$Sample[combine.umap.merge$Species %in% c("Mouse.Teich")]
+mouse.cells <- combine.umap.merge$Sample[combine.umap.merge$Species %in% c("Mouse")]
+
+teichmouse.cosine <- cosine.teichmouse.mouse[, teichmouse.cells]
+mouse.cosine <- cosine.teichmouse.mouse[, mouse.cells]
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+teichmouse.cosine.meta <- combine.umap.merge[combine.umap.merge$Species %in% c("Mouse.Teich"), ]
+rownames(teichmouse.cosine.meta) <- teichmouse.cosine.meta$Sample
+
+teichmouse.cosine.pca <- prcomp_irlba(t(teichmouse.cosine), n=50)
+
+teichmouse.batch.mnn <- reducedMNN(teichmouse.cosine.pca$x,
+                              batch=as.factor(teichmouse.cosine.meta[colnames(teichmouse.cosine), ]$Donor),
+                              k=20)
+```
+
+Check the teichmouse batch correction worked OK
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+set.seed(42)
+teichmouse.mnn.umap <- as.data.frame(umap(as.matrix(teichmouse.batch.mnn$corrected[, c(1:50)]),
+                               n_neighbors=7,
+                               init='spectral',
+                               metric='euclidean',
+                               n_components=2,
+                               min_dist=0.5,
+                               method='naive')$layout)
+
+colnames(teichmouse.mnn.umap) <- paste0("MNN.Mouse.Teich.UMAP", c(1:2))
+teichmouse.mnn.umap$Sample <- colnames(teichmouse.cosine)
+teichmouse.mnn.merge <- merge(teichmouse.cosine.meta, teichmouse.mnn.umap, by='Sample')
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=7.25}
+ggplot(teichmouse.mnn.merge, aes(x=MNN.Mouse.Teich.UMAP1, y=MNN.Mouse.Teich.UMAP2, colour=CellType)) +
+  geom_point(size=0.25) +
+  theme_mike() +
+  scale_colour_Publication() +
+  theme(legend.position="right", legend.direction="vertical") +
+  guides(colour=guide_legend(ncol=1, title.position="top", override.aes=list(size=3)))
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=7.25}
+ggplot(teichmouse.mnn.merge, aes(x=MNN.Mouse.Teich.UMAP1, y=MNN.Mouse.Teich.UMAP2, colour=Age)) +
+  geom_point(size=0.25) +
+  theme_mike() +
+  scale_colour_colorblind() +
+  theme(legend.position="right", legend.direction="vertical") +
+  guides(colour=guide_legend(ncol=1, title.position="top", override.aes=list(size=3)))
+```
+
+That's better. There is still some age-specific effects retained after batch correction. I'll do the same for our mouse then combine these PCs together.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+mouse.cosine.meta <- combine.umap.merge[combine.umap.merge$Species %in% c("Mouse"), ]
+rownames(mouse.cosine.meta) <- mouse.cosine.meta$Sample
+
+mouse.cosine.pca <- prcomp_irlba(t(mouse.cosine), n=50)
+
+mouse.batch.mnn <- reducedMNN(mouse.cosine.pca$x,
+                              batch=as.factor(mouse.cosine.meta[colnames(mouse.cosine), ]$Donor),
+                              k=20)
+```
+
+Check the teichmouse batch correction worked OK.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+set.seed(42)
+mouse.mnn.umap <- as.data.frame(umap(as.matrix(mouse.batch.mnn$corrected[, c(1:50)]),
+                               n_neighbors=11,
+                               init='spectral',
+                               metric='euclidean',
+                               n_components=2,
+                               min_dist=0.6,
+                               method='naive')$layout)
+
+colnames(mouse.mnn.umap) <- paste0("MNN.Mouse.UMAP", c(1:2))
+mouse.mnn.umap$Sample <- colnames(mouse.cosine)
+mouse.mnn.merge <- merge(mouse.cosine.meta, mouse.mnn.umap, by='Sample')
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=7.25}
+ggplot(mouse.mnn.merge, aes(x=MNN.Mouse.UMAP1, y=MNN.Mouse.UMAP2, colour=CellType)) +
+  geom_point(size=0.25) +
+  theme_mike() +
+  scale_colour_Publication() +
+  theme(legend.position="right", legend.direction="vertical") +
+  guides(colour=guide_legend(ncol=1, title.position="top", override.aes=list(size=3)))
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=7.25}
+ggplot(mouse.mnn.merge, aes(x=MNN.Mouse.UMAP1, y=MNN.Mouse.UMAP2, colour=Age)) +
+  geom_point(size=0.25) +
+  theme_mike() +
+  scale_colour_colorblind() +
+  theme(legend.position="right", legend.direction="vertical") +
+  guides(colour=guide_legend(ncol=1, title.position="top", override.aes=list(size=3)))
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# MNN batch correction
+teichmouse.correct <- teichmouse.batch.mnn$corrected
+rownames(teichmouse.correct) <- teichmouse.cosine.meta[colnames(teichmouse.cosine), ]$Sample
+
+thymouse.correct <- mouse.batch.mnn$corrected
+rownames(thymouse.correct) <- mouse.cosine.meta[colnames(mouse.cosine), ]$Sample
+
+teichmouse.mouse.mnn <- reducedMNN(teichmouse.correct, thymouse.correct,
+                                   k=5)
+teichmouse.mouse.correct <- teichmouse.mouse.mnn$corrected
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+set.seed(42)
+mnn.umap <- as.data.frame(umap(as.matrix(teichmouse.mouse.correct[, c(1:20)]),
+                               n_neighbors=15,
+                               metric='euclidean',
+                               n_components=2,
+                               min_dist=0.5,
+                               method='naive')$layout)
+
+colnames(mnn.umap) <- paste0("MNN.UMAP", c(1:2))
+mnn.umap$Sample <- rownames(teichmouse.mouse.correct)
+combine.mnn.merge <- merge(combine.umap.merge, mnn.umap, by='Sample')
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=7.25}
+ggplot(combine.mnn.merge, aes(x=MNN.UMAP1, y=MNN.UMAP2, colour=Species)) +
+  geom_point(size=0.25) +
+  theme_mike() +
+  scale_colour_colorblind() +
+  theme(legend.position="right", legend.direction="vertical") +
+  guides(colour=guide_legend(ncol=1, title.position="top", override.aes=list(size=3)))
+```
+
+Hmm, still not as well mixed as I would have expected.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.15, fig.width=9.95}
+ggplot(combine.mnn.merge, aes(x=MNN.UMAP1, y=MNN.UMAP2, colour=CellType)) +
+  geom_point(size=0.25) +
+  theme_mike() +
+  scale_colour_Publication() +
+  theme(legend.position="right", legend.direction="vertical") +
+  guides(colour=guide_legend(ncol=2, titke.position="top", override.aes=list(size=3)))
+```
+
+Maybe I'll try this in gene expression space, then do the PCA?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.15, fig.width=11.95}
+ggplot(combine.mnn.merge, aes(x=MNN.UMAP1, y=MNN.UMAP2)) +
+  geom_point(data=combine.mnn.merge[, c("MNN.UMAP1", "MNN.UMAP2")], 
+             colour='grey80', alpha=0.5, size=0.25) +
+  geom_point(size=0.5, aes(colour=CellType)) +
+  theme_mike() +
+  scale_colour_Publication() +
+  theme(legend.position="right", legend.direction="vertical",
+        legend.text=element_text(size=11)) +
+  facet_wrap(~Species) +
+  guides(colour=guide_legend(ncol=2, titke.position="top", override.aes=list(size=3)))
+```
+
+Umm, I'm concerned that their mapping is terribly, terribly wrong. Which of these is the gold standard? I would say ours as we sorted the cTEC and mTEC, etc 
+separately, but this is also a poor indicator of actual provenance/lineage. Generally though, the link from Intertypical TEC to mTEC isn't preserved well here. 
+I think I should compare to our 10X data.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+goi <- c("Ccl21a", "Krt5", "Aire", "Cd52", "Dclk1", "Avil", "Syngr1", "Chga", "Cd177", "Psmb11", "Prss16", "Krt80", "Spink5", "Lifr",
+         "Ly6d", "Ly6e", "Ly6a", "Fgfr2", "Fgfr3", "Cdk1", "Pdpn", "Plekhb1", "Itgb2", "Dll4", "Cdh2", "Gas1", "Igfbp4", "Mgp", "Apoe", "Gsn", "Anxa1")
+goi.ensembl <- gene.df$ensembl_gene_id[gene.df$external_gene_name %in% goi]
+mouse.goi.exprs <- as.data.frame(t(logcounts(mouse.sce[rownames(mouse.sce) %in% goi.ensembl, ])))
+rownames(gene.df) <- gene.df$ensembl_gene_id
+colnames(mouse.goi.exprs) <- gene.df[intersect(rownames(mouse.sce) , goi.ensembl), ]$external_gene_name 
+mouse.goi.exprs$CellID <- colnames(mouse.sce)
+
+combined.goi.exprs <- do.call(rbind.data.frame, list("teich"=goi.exprs, "mouse"=mouse.goi.exprs))
+combine.goi.merge <- merge(combine.mnn.merge, combined.goi.exprs, by.x='Sample', by.y='CellID')
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.15, fig.width=11.95}
+ggplot(combine.goi.merge, aes(x=MNN.UMAP1, y=MNN.UMAP2)) +
+  geom_point(data=combine.goi.merge[, c("MNN.UMAP1", "MNN.UMAP2")], 
+             colour='grey80', alpha=0.5, size=0.25) +
+  geom_point(size=0.5, aes(colour=Ccl21a)) +
+  theme_mike() +
+  scale_colour_viridis() +
+  theme(legend.position="right", legend.direction="vertical",
+        legend.text=element_text(size=11)) +
+  facet_wrap(~Species) +
+  guides(colour=guide_colourbar(ncol=1, title.position="top"))
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.15, fig.width=11.95}
+ggplot(combine.goi.merge, aes(x=MNN.UMAP1, y=MNN.UMAP2)) +
+  geom_point(data=combine.goi.merge[, c("MNN.UMAP1", "MNN.UMAP2")], 
+             colour='grey80', alpha=0.5, size=0.25) +
+  geom_point(size=0.5, aes(colour=Aire)) +
+  theme_mike() +
+  scale_colour_viridis() +
+  theme(legend.position="right", legend.direction="vertical",
+        legend.text=element_text(size=11)) +
+  facet_wrap(~Species) +
+  guides(colour=guide_colourbar(ncol=1, title.position="top"))
+```
+
+What about performing the joint PCA on the cosine-normalised cells, then batch correcting these PCs?
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# MNN batch correction
+cosine.teichmouse.mouse <- cosineNorm(logcounts(combine.homolog.sce), subset.row=mouse.hvg.ensembl)
+rownames(combine.umap.merge) <- combine.umap.merge$Sample
+
+teichmouse.mouse.mnn <- reducedMNN(cosine.pca$x,
+                                   batch=as.factor(combine.umap.merge[colnames(cosine.teichmouse.mouse), ]$Species),
+                                   k=20)
+teichmouse.mouse.correct <- teichmouse.mouse.mnn$corrected
+rownames(teichmouse.mouse.correct) <- combine.umap.merge[colnames(cosine.teichmouse.mouse), ]$Sample
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+set.seed(42)
+mnn.umap <- as.data.frame(umap(as.matrix(teichmouse.mouse.correct[, c(1:20)]),
+                               n_neighbors=15,
+                               metric='euclidean',
+                               n_components=2,
+                               min_dist=0.5,
+                               method='naive')$layout)
+
+colnames(mnn.umap) <- paste0("MNN.UMAP", c(1:2))
+mnn.umap$Sample <- rownames(teichmouse.mouse.correct)
+combine.mnn.merge <- merge(combine.umap.merge, mnn.umap, by='Sample')
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=7.25}
+ggplot(combine.mnn.merge, aes(x=MNN.UMAP1, y=MNN.UMAP2, colour=Species)) +
+  geom_point(size=0.25) +
+  theme_mike() +
+  scale_colour_colorblind() +
+  theme(legend.position="right", legend.direction="vertical") +
+  guides(colour=guide_legend(ncol=1, title.position="top", override.aes=list(size=3)))
+
+ggsave("~/Dropbox/AgeingExperiment/Human_Thymus/Teichmouse_MNN_UMAP-Batch.png",
+       height=5.15, width=9.95, dpi=300)
+```
+
+Hmm, still not as well mixed as I would have expected.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.15, fig.width=9.95}
+ggplot(combine.mnn.merge, aes(x=MNN.UMAP1, y=MNN.UMAP2, colour=CellType)) +
+  geom_point(size=0.25) +
+  theme_mike() +
+  scale_colour_Publication() +
+  theme(legend.position="right", legend.direction="vertical") +
+  guides(colour=guide_legend(ncol=2, titke.position="top", override.aes=list(size=3)))
+
+ggsave("~/Dropbox/AgeingExperiment/Human_Thymus/Teichmouse_MNN_UMAP-TECtype.png",
+       height=5.15, width=9.95, dpi=300)
+```
+
+Solved!!! They need to be in a joint-PC space.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+goi <- c("Ccl21a", "Krt5", "Aire", "Cd52", "Dclk1", "Avil", "Syngr1", "Chga", "Cd177", "Psmb11", "Prss16", "Krt80", "Spink5", "Lifr",
+         "Ly6d", "Ly6e", "Ly6a", "Fgfr2", "Fgfr3", "Cdk1", "Pdpn", "Plekhb1", "Itgb2", "Dll4", "Cdh2", "Gas1", "Igfbp4", "Mgp", "Apoe", "Gsn", "Anxa1")
+goi.ensembl <- gene.df$ensembl_gene_id[gene.df$external_gene_name %in% goi]
+mouse.goi.exprs <- as.data.frame(t(logcounts(mouse.sce[rownames(mouse.sce) %in% goi.ensembl, ])))
+rownames(gene.df) <- gene.df$ensembl_gene_id
+colnames(mouse.goi.exprs) <- gene.df[intersect(rownames(mouse.sce) , goi.ensembl), ]$external_gene_name 
+mouse.goi.exprs$CellID <- colnames(mouse.sce)
+
+combined.goi.exprs <- do.call(rbind.data.frame, list("teich"=goi.exprs, "mouse"=mouse.goi.exprs))
+combine.goi.merge <- merge(combine.mnn.merge, combined.goi.exprs, by.x='Sample', by.y='CellID')
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.15, fig.width=11.95}
+ggplot(combine.goi.merge, aes(x=MNN.UMAP1, y=MNN.UMAP2)) +
+  geom_point(data=combine.goi.merge[, c("MNN.UMAP1", "MNN.UMAP2")], 
+             colour='grey80', alpha=0.5, size=0.25) +
+  geom_point(size=0.5, aes(colour=Ccl21a)) +
+  theme_mike() +
+  scale_colour_viridis() +
+  theme(legend.position="right", legend.direction="vertical",
+        legend.text=element_text(size=11)) +
+  facet_wrap(~Species) +
+  guides(colour=guide_colourbar(ncol=1, title.position="top"))
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.15, fig.width=11.95}
+ggplot(combine.goi.merge, aes(x=MNN.UMAP1, y=MNN.UMAP2)) +
+  geom_point(data=combine.goi.merge[, c("MNN.UMAP1", "MNN.UMAP2")], 
+             colour='grey80', alpha=0.5, size=0.25) +
+  geom_point(size=0.5, aes(colour=Aire)) +
+  theme_mike() +
+  scale_colour_viridis() +
+  theme(legend.position="right", legend.direction="vertical",
+        legend.text=element_text(size=11)) +
+  facet_wrap(~Species) +
+  guides(colour=guide_colourbar(ncol=1, title.position="top"))
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.15, fig.width=11.95}
+ggplot(combine.goi.merge, aes(x=MNN.UMAP1, y=MNN.UMAP2)) +
+  geom_point(data=combine.goi.merge[, c("MNN.UMAP1", "MNN.UMAP2")], 
+             colour='grey80', alpha=0.5, size=0.25) +
+  geom_point(size=0.5, aes(colour=Spink5)) +
+  theme_mike() +
+  scale_colour_viridis() +
+  theme(legend.position="right", legend.direction="vertical",
+        legend.text=element_text(size=11)) +
+  facet_wrap(~Species) +
+  guides(colour=guide_colourbar(ncol=1, title.position="top"))
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.15, fig.width=11.95}
+ggplot(combine.goi.merge, aes(x=MNN.UMAP1, y=MNN.UMAP2)) +
+  geom_point(data=combine.goi.merge[, c("MNN.UMAP1", "MNN.UMAP2")], 
+             colour='grey80', alpha=0.5, size=0.25) +
+  geom_point(size=0.5, aes(colour=Dclk1)) +
+  theme_mike() +
+  scale_colour_viridis() +
+  theme(legend.position="right", legend.direction="vertical",
+        legend.text=element_text(size=11)) +
+  facet_wrap(~Species) +
+  guides(colour=guide_colourbar(ncol=1, title.position="top"))
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5.15, fig.width=11.95}
+ggplot(combine.goi.merge, aes(x=MNN.UMAP1, y=MNN.UMAP2)) +
+  geom_point(data=combine.goi.merge[, c("MNN.UMAP1", "MNN.UMAP2")], 
+             colour='grey80', alpha=0.5, size=0.25) +
+  geom_point(size=0.5, aes(colour=Ly6a)) +
+  theme_mike() +
+  scale_colour_viridis() +
+  theme(legend.position="right", legend.direction="vertical",
+        legend.text=element_text(size=11)) +
+  facet_wrap(~Species) +
+  guides(colour=guide_colourbar(ncol=1, title.position="top"))
+```
+
+
+
+
+
+
+
+
+This shows the same plots by age - most of the overlap is with adult teichmouse TEC - and actually the 3month old cells are relaly different to the rest. Perhaps I 
+can try this on just the adult teichmouse TEC? I'll try the classification approach using kNNs, a Random Forest and a multinomial model.
+
+### kNN classification: Mouse subsets
+
+I'll train on the mouse data and classify the teichmouse cells first (k=5).
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+mouse.to.teichmouse.knn <- knn(train=teichmouse.mouse.correct[colnames(mouse.cosine), c(1:25)],
+                               test=teichmouse.mouse.correct[colnames(teichmouse.cosine), c(1:25)],
+                               cl=mouse.cosine.meta[colnames(mouse.cosine), ]$CellType,
+                               k=5)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+teichmouse.knn <- data.frame("Sample"=colnames(teichmouse.cosine), "knnClass"=mouse.to.teichmouse.knn)
+teichmouse.knn.merge <- merge(teichmouse.cosine.meta, teichmouse.knn, by='Sample')
+
+teichmouse.class.props <- table(teichmouse.knn.merge$knnClass, teichmouse.knn.merge$CellType)
+teichmouse.class.props <- apply(teichmouse.class.props, 2, FUN=function(X) X/sum(X))
+
+pdf("~/Dropbox/AgeingExperiment/Human_Thymus/Mouse_to_Teichmouse_confusion.pdf", height=3.95, width=3.95)
+pheatmap(teichmouse.class.props, cluster_cols=FALSE, cluster_rows=FALSE)
+dev.off()
+
+pheatmap(teichmouse.class.props, cluster_cols=FALSE, cluster_rows=FALSE)
+```
+
+This heatmap shows the proportion of teichmouse cells from each type (columns) that are classified into the different mouse groups by the kNN classifier. From this 
+it looks like the mTEC(II) and mTEC(III) are closest to the Intertypical TEC.
+
+As a sanity check, how does this perform cross-mapping over ages in both teichmouse and mouse?
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# train on 19 and classify on 35yo
+teichmouse.6dayso.cells <- teichmouse.cosine.meta$Sample[teichmouse.cosine.meta$Age %in% c("6 days")]
+teichmouse.4.6wks.cells  <- teichmouse.cosine.meta$Sample[teichmouse.cosine.meta$Age %in% c("4-6 weeks")]
+
+teichmouse.ages.knn <- knn(train=teichmouse.mouse.correct[teichmouse.6dayso.cells, c(1:25)],
+                      test=teichmouse.mouse.correct[teichmouse.4.6wks.cells, c(1:25)],
+                      cl=teichmouse.cosine.meta[teichmouse.6dayso.cells, ]$CellType,
+                      k=21)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+teichmouse.age.knn <- data.frame("Sample"=teichmouse.4.6wks.cells, "knnClass"=teichmouse.ages.knn)
+teichmouse.age.knn.merge <- merge(teichmouse.cosine.meta, teichmouse.age.knn, by='Sample')
+
+teichmouse.age.class.props <- table(teichmouse.age.knn.merge$knnClass, teichmouse.age.knn.merge$CellType)
+teichmouse.age.class.props <- apply(teichmouse.age.class.props, 2, FUN=function(X) X/sum(X))
+
+pheatmap(teichmouse.age.class.props, cluster_cols=FALSE, cluster_rows=FALSE)
+```
+
+Even within their own data this does poorly - are they definitely fibrolasts?!
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# train on 19 and classify on 4.6wks
+mouse.4wk.cells <- mouse.cosine.meta$Sample[mouse.cosine.meta$Age %in% c("4wk")]
+mouse.16wk.cells  <- mouse.cosine.meta$Sample[mouse.cosine.meta$Age %in% c("16wk")]
+
+mouse.ages.knn <- knn(train=teichmouse.mouse.correct[mouse.4wk.cells, c(1:25)],
+                      test=teichmouse.mouse.correct[mouse.16wk.cells, c(1:25)],
+                      cl=mouse.cosine.meta[mouse.4wk.cells, ]$CellType,
+                      k=21)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+mouse.age.knn <- data.frame("Sample"=mouse.16wk.cells, "knnClass"=mouse.ages.knn)
+mouse.age.knn.merge <- merge(mouse.cosine.meta, mouse.age.knn, by='Sample')
+
+mouse.age.class.props <- table(mouse.age.knn.merge$knnClass, mouse.age.knn.merge$CellType)
+mouse.age.class.props <- apply(mouse.age.class.props, 2, FUN=function(X) X/sum(X))
+pheatmap(mouse.age.class.props, cluster_cols=FALSE, cluster_rows=FALSE)
+```
+
+There's some error in the sTEC which get classified into Intertpical and mature cTEC (there are only 3 sTEC though) - likeiwse for the 2 perinatal cTEC, which are
+classified into mature cTEC, and the 8 nTEC which are classified into either nTEC or mature mTEC.
+
+I think I've got more confidence in the mouse cell type mapping than the teichmouse. I'll try mapping the mouse into the teichmouse classes anyway.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+teichmouse.to.mouse.knn <- knn(test=teichmouse.mouse.correct[colnames(mouse.cosine), c(1:25)],
+                          train=teichmouse.mouse.correct[colnames(teichmouse.cosine), c(1:25)],
+                          cl=teichmouse.cosine.meta[colnames(teichmouse.cosine), ]$CellType,
+                          k=5)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+mouse.knn <- data.frame("Sample"=colnames(mouse.cosine), "knnClass"=teichmouse.to.mouse.knn)
+mouse.knn.merge <- merge(mouse.cosine.meta, mouse.knn, by='Sample')
+
+mouse.class.props <- table(mouse.knn.merge$knnClass, mouse.knn.merge$CellType)
+mouse.class.props <- apply(mouse.class.props, 2, FUN=function(X) X/sum(X))
+
+pdf("~/Dropbox/AgeingExperiment/Human_Thymus/TeichMouse_to_AgeMouse_confusion.pdf", height=3.95, width=3.95)
+pheatmap(mouse.class.props, cluster_cols=FALSE, cluster_rows=FALSE)
+dev.off()
+
+pheatmap(mouse.class.props, cluster_cols=FALSE, cluster_rows=FALSE)
+```
+
+Now I've classified the mouse cells into the teichmouse types - there is definitely less definition in the teichmouse data set. The Intertypical TEC are smeared across the 
+mTEC(I), mTEC(II) and mTEC(III) classes, the mature cTEC are also spread over the cTE, mcTEC and mTEC(I), the mature mTEC are split into mcTEC and mTEC(I). In 
+fact, most of the cells are classified into mTEC(I) with the exception of the Tuft-like mTEC (which go into TEC(myo)?!), the perinatal cTEC which get split 
+across the cTEC and mcTEC (at least this makes some sense) and the Post-Aire mTEC which are split between mTEC(I) and TEC(neuro).
+
+Can I get the correct classification using the mouse data from this paper?
+
+
+
